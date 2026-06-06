@@ -154,6 +154,7 @@ fn normalize_link(url: &str) -> String {
 }
 
 fn main() {
+    eprintln!("[mdbook-obsidian] invoked with args: {:?}", std::env::args().collect::<Vec<_>>());
     let preprocessor = ObsidianPreprocessor;
     let args: Vec<String> = std::env::args().collect();
 
