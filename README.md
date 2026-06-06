@@ -8,19 +8,30 @@ An [mdBook](https://rust-lang.github.io/mdBook/) preprocessor that transforms [O
 
 ### Internal link normalization
 
-Obsidian encodes spaces in link paths as `%20` and preserves the original file casing. mdBook expects lowercase, hyphen-separated file names. This preprocessor converts links automatically:
+Obsidian encodes spaces in link paths as `%20` and preserves the original file casing. mdBook generates heading IDs that are lowercase and hyphenated. This preprocessor aligns anchor fragments so in-page links resolve correctly:
 
 | Before | After |
 |--------|-------|
-| `[My Note](A%20file-name%20with%20space.md)` | `[My Note](a-file-name-with-space.md)` |
-| `[Link](MyNote.md)` | `[Link](mynote.md)` |
-| `[Section](My%20Note.md#section-title)` | `[Section](my-note.md#section-title)` |
+| `[Section](#Grade%201%20-%20Color)` | `[Section](#grade-1---color)` |
+| `[Link](Note.md#Grade%201)` | `[Link](Note.md#grade-1)` |
 
-The transformation: URL-decode percent-encoded characters → lowercase → spaces become hyphens.
+Image links and file paths are left untouched — only `#fragment` portions are normalized. External URLs, links inside fenced code blocks, and links inside inline code spans are also unchanged.
 
-External URLs (`https://…`, `mailto:…`) and same-page anchors (`#heading`) are left unchanged.
+### Excalidraw viewer pages
 
-Links inside fenced code blocks and inline code spans are also left unchanged.
+Links and wikilinks that point to `.excalidraw` files are automatically converted into navigable viewer pages. No extra files need to be added to your book — the viewer HTML is compiled into the preprocessor binary.
+
+**Supported link formats:**
+
+| Markdown source | Result |
+|---|---|
+| `![[My Drawing.excalidraw]]` | Link to viewer page |
+| `[[My Drawing.excalidraw\|See diagram]]` | Link with custom text |
+| `[diagram](My%20Drawing.excalidraw)` | Link to viewer page |
+
+The viewer page loads [React](https://react.dev/) and [@excalidraw/excalidraw](https://www.npmjs.com/package/@excalidraw/excalidraw) from a CDN and renders the drawing in read-only mode inside mdBook's normal page chrome (sidebar and navigation are preserved). The theme (light/dark) is read from mdBook's active theme automatically.
+
+**Requirements:** the published book must be accessible from the internet so the browser can reach the CDN scripts.
 
 ## Installation
 
@@ -77,10 +88,11 @@ Links that are unchanged (external URLs, image links, already-normalized anchors
 
 ## Roadmap
 
-- [ ] Wikilink conversion: `[[Note Name]]` → `[Note Name](note-name.md)`
-- [ ] Wikilink aliases: `[[Note Name|display text]]`
+- [ ] Wikilink conversion for regular notes: `[[Note Name]]` → `[Note Name](note-name.md)`
 - [ ] Obsidian callout/admonition blocks
 - [ ] Tag stripping or conversion
+- [ ] Excalidraw: self-hosted CDN fallback for air-gapped deployments
+- [ ] Excalidraw: collision handling when two files share the same stem
 
 ## License
 
