@@ -36,6 +36,10 @@ impl Preprocessor for ObsidianPreprocessor {
             .unwrap_or(None)
             .unwrap_or(false);
 
+        if verbose {
+            eprintln!(" INFO [mdbook-obsidian]: running");
+        }
+
         // --- Pass 0: TOC generation --------------------------------------
         toc::run_toc_pass(ctx, &mut book, verbose);
 
@@ -88,7 +92,7 @@ impl Preprocessor for ObsidianPreprocessor {
                         Ok(json) => make_excalidraw_chapter(&r, &json).content,
                         Err(msg) => {
                             if verbose {
-                                eprintln!("[mdbook-obsidian] {}: {msg}", file_path.display());
+                                eprintln!(" WARN [mdbook-obsidian]: {}: {msg}", file_path.display());
                             }
                             make_excalidraw_error_chapter(&r, &msg).content
                         }
@@ -131,7 +135,7 @@ impl Preprocessor for ObsidianPreprocessor {
                 Ok(json) => make_excalidraw_chapter(r, &json),
                 Err(msg) => {
                     if verbose {
-                        eprintln!("[mdbook-obsidian] {}: {msg}", r.file_path.display());
+                        eprintln!(" WARN [mdbook-obsidian]: {}: {msg}", r.file_path.display());
                     }
                     make_excalidraw_error_chapter(r, &msg)
                 }
@@ -220,10 +224,6 @@ pub(crate) fn detect_fence(trimmed: &str) -> (bool, char, usize) {
 // ---------------------------------------------------------------------------
 
 fn main() {
-    eprintln!(
-        "[mdbook-obsidian] invoked with args: {:?}",
-        std::env::args().collect::<Vec<_>>()
-    );
     let preprocessor = ObsidianPreprocessor;
     let args: Vec<String> = std::env::args().collect();
 

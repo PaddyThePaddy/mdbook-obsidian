@@ -33,7 +33,7 @@ pub(crate) fn run_toc_pass(ctx: &PreprocessorContext, book: &mut Book, verbose: 
 
     if files.is_empty() {
         if verbose {
-            eprintln!("[mdbook-obsidian] toc: no uncovered files found");
+            eprintln!(" INFO [mdbook-obsidian]: toc: no uncovered files found");
         }
         return;
     }
@@ -65,7 +65,7 @@ pub(crate) fn run_toc_pass(ctx: &PreprocessorContext, book: &mut Book, verbose: 
 
     if verbose {
         eprintln!(
-            "[mdbook-obsidian] toc: inserting {} top-level item(s) at position {insert_at}",
+            " INFO [mdbook-obsidian]: toc: inserting {} top-level item(s) at position {insert_at}",
             new_items.len()
         );
     }
@@ -118,7 +118,7 @@ fn scan_files(
             Ok(e) => e,
             Err(err) => {
                 if verbose {
-                    eprintln!("[mdbook-obsidian] toc walk error: {err}");
+                    eprintln!(" WARN [mdbook-obsidian]: toc walk error: {err}");
                 }
                 continue;
             }

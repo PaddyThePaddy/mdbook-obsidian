@@ -88,7 +88,7 @@ fn replace_links(re: &Regex, text: &str, verbose: bool) -> String {
 
         let new_url = normalize_link(url);
         if verbose && new_url != url[..] {
-            eprintln!("[mdbook-obsidian] link: {url}  =>  {new_url}");
+            eprintln!(" INFO [mdbook-obsidian]: link: {url}  =>  {new_url}");
         }
         format!("[{}]({})", link_text, new_url)
     })

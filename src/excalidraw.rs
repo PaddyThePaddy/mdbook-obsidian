@@ -298,7 +298,7 @@ fn replace_wikilinks(
             };
 
             if verbose {
-                eprintln!("[mdbook-obsidian] excalidraw wikilink: {raw_path}  =>  {href}");
+                eprintln!(" INFO [mdbook-obsidian]: excalidraw wikilink: {raw_path}  =>  {href}");
             }
             refs.push(ExcalidrawRef { file_path, slug, name: stem.to_string() });
             format!("[{}]({})", display, href)
@@ -333,7 +333,7 @@ fn replace_links(
             let file_path = chapter_dir.join(decoded.as_ref());
 
             if verbose {
-                eprintln!("[mdbook-obsidian] excalidraw link: {raw_path}  =>  {href}");
+                eprintln!(" INFO [mdbook-obsidian]: excalidraw link: {raw_path}  =>  {href}");
             }
             refs.push(ExcalidrawRef { file_path, slug, name: stem.to_string() });
 
