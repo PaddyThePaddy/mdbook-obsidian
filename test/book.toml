@@ -1,2 +1,6 @@
 
 [preprocessor.obsidian]
+generate_toc = true
+toc_ignore_file = ".mdignore"
+insert_heading = true
+hard_line_breaks = true

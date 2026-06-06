@@ -86,6 +86,65 @@ Links that are unchanged (external URLs, image links, already-normalized anchors
 2. Copy or symlink the note files into your mdBook `src/` directory.
 3. Build with `mdbook build` — the preprocessor normalizes every internal link before rendering.
 
+### Automatic TOC generation
+
+When enabled, the preprocessor scans the `src/` directory and automatically adds any markdown files that are **not listed in `SUMMARY.md`** as navigable book chapters. The file tree is reflected in the sidebar as a nested hierarchy.
+
+Enable it in `book.toml`:
+
+```toml
+[preprocessor.obsidian]
+generate_toc = true
+```
+
+**Controlling which files are included:**
+
+Files matched by `.gitignore` (at any level) are always excluded. To add extra ignore patterns specific to the book, create an ignore file and reference it:
+
+```toml
+[preprocessor.obsidian]
+generate_toc = true
+toc_ignore_file = ".mdignore"   # name of your extra ignore file
+```
+
+The ignore file uses the same syntax as `.gitignore`. For example, to exclude draft files:
+
+```
+*-draft.md
+private/
+```
+
+**Directory structure:**
+
+- Files at the root of `src/` become top-level chapters.
+- Subdirectories become nested sections. If a directory contains `index.md` or `README.md`, that file is used as the clickable section header; otherwise the section header is non-clickable (a draft chapter).
+- `.excalidraw.md` files are excluded from TOC scanning — they are handled separately by the Excalidraw viewer feature.
+
+**Controlling insertion order:**
+
+Place the placeholder comment `<!-- mdbook-obsidian toc -->` inside `SUMMARY.md` to control where the auto-generated chapters appear relative to your manually listed chapters:
+
+```markdown
+- [Introduction](intro.md)
+- [Setup](setup.md)
+
+<!-- mdbook-obsidian toc -->
+
+- [Changelog](changelog.md)
+```
+
+Auto-discovered chapters are inserted at the placeholder's position. If the placeholder is absent, discovered chapters are appended at the end.
+
+**Inline TOC list:**
+
+The same placeholder can also be placed inside any regular chapter file. There it is replaced with a nested markdown list of all auto-discovered chapters, useful for a landing page or index:
+
+```markdown
+## Auto-discovered notes
+
+<!-- mdbook-obsidian toc -->
+```
+
 ## Roadmap
 
 - [ ] Wikilink conversion for regular notes: `[[Note Name]]` → `[Note Name](note-name.md)`

@@ -1,3 +1,1 @@
-[toc](toc.md)
-
 <!-- mdbook-obsidian toc -->
