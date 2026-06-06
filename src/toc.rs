@@ -1,5 +1,6 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use mdbook_preprocessor::book::{Book, BookItem, Chapter, SectionNumber};
 use mdbook_preprocessor::PreprocessorContext;
@@ -8,6 +9,22 @@ use regex::Regex;
 use crate::excalidraw::excalidraw_slug;
 
 const TOC_PLACEHOLDER: &str = "<!-- mdbook-obsidian toc -->";
+
+#[derive(Clone, Copy, PartialEq)]
+enum TocSort {
+    /// Preserve the order returned by the filesystem walker.
+    None,
+    /// Sort entries alphabetically by name (case-insensitive).
+    Alpha,
+    /// Sort entries by modification time, oldest first.
+    Modified,
+}
+
+fn path_mtime(path: &Path) -> SystemTime {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .unwrap_or(SystemTime::UNIX_EPOCH)
+}
 
 pub(crate) fn run_toc_pass(ctx: &PreprocessorContext, book: &mut Book, verbose: bool) {
     let generate_toc = ctx
@@ -23,6 +40,23 @@ pub(crate) fn run_toc_pass(ctx: &PreprocessorContext, book: &mut Book, verbose: 
         .config
         .get::<String>("preprocessor.obsidian.toc_ignore_file")
         .unwrap_or(None);
+
+    let sort = ctx
+        .config
+        .get::<String>("preprocessor.obsidian.toc_sort")
+        .unwrap_or(None)
+        .map(|s| match s.to_lowercase().as_str() {
+            "alpha" | "alphabetical" => TocSort::Alpha,
+            "modified" | "mtime" => TocSort::Modified,
+            _ => TocSort::None,
+        })
+        .unwrap_or(TocSort::None);
+
+    let dirs_first = ctx
+        .config
+        .get::<bool>("preprocessor.obsidian.toc_dirs_first")
+        .unwrap_or(None)
+        .unwrap_or(false);
 
     let src_dir = ctx.root.join(&ctx.config.book.src);
     let summary_content =
@@ -53,7 +87,8 @@ pub(crate) fn run_toc_pass(ctx: &PreprocessorContext, book: &mut Book, verbose: 
         .unwrap_or(0)
         + 1;
 
-    let new_items = build_items(&files, &src_dir, Path::new(""), &[], &[], start_num);
+    let new_items =
+        build_items(&files, &src_dir, Path::new(""), &[], &[], start_num, sort, dirs_first);
     if new_items.is_empty() {
         return;
     }
@@ -99,7 +134,8 @@ fn covered_paths(items: &[BookItem]) -> HashSet<PathBuf> {
 }
 
 /// Walk `src_dir` respecting `.gitignore` (and optional extra ignore file).
-/// Returns uncovered `.md` files sorted by relative path.
+/// Returns uncovered `.md` files in filesystem walk order; sorting is applied
+/// later in `build_items` based on the `toc_sort` config option.
 fn scan_files(
     src_dir: &Path,
     covered: &HashSet<PathBuf>,
@@ -142,11 +178,10 @@ fn scan_files(
             files.push(rel);
         }
     }
-    files.sort();
     files
 }
 
-/// Recursively build `BookItem`s from a sorted list of relative file paths.
+/// Recursively build `BookItem`s from a list of relative file paths.
 /// Directories with an `index.md` / `README.md` become clickable section headers;
 /// otherwise they become draft (non-clickable) headers.
 ///
@@ -160,9 +195,15 @@ fn build_items(
     parent_names: &[String],
     number_prefix: &[u32],
     start_idx: u32,
+    sort: TocSort,
+    dirs_first: bool,
 ) -> Vec<BookItem> {
+    // Partition files into direct entries (at this level) and subdirectory groups.
+    // subdir_order preserves first-seen order, matching filesystem walk order when
+    // sort == TocSort::None.
     let mut direct: Vec<&PathBuf> = Vec::new();
-    let mut subdirs: BTreeMap<String, Vec<&PathBuf>> = BTreeMap::new();
+    let mut subdir_order: Vec<String> = Vec::new();
+    let mut subdir_map: HashMap<String, Vec<&PathBuf>> = HashMap::new();
 
     for file in files {
         let Ok(rel) = file.strip_prefix(prefix) else {
@@ -173,85 +214,153 @@ fn build_items(
             (Some(_), None) => direct.push(file),
             (Some(first), Some(_)) => {
                 let dir = first.as_os_str().to_string_lossy().into_owned();
-                subdirs.entry(dir).or_default().push(file);
+                if !subdir_map.contains_key(&dir) {
+                    subdir_order.push(dir.clone());
+                }
+                subdir_map.entry(dir).or_default().push(file);
             }
             _ => {}
         }
     }
 
+    // Sort direct files at this level.
+    match sort {
+        TocSort::None => {}
+        TocSort::Alpha => {
+            direct.sort_by(|a, b| {
+                let an = a
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                let bn = b
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                an.cmp(&bn)
+            });
+        }
+        TocSort::Modified => {
+            direct.sort_by_key(|p| path_mtime(&src_dir.join(*p)));
+        }
+    }
+
+    // Sort subdirectory names at this level.
+    match sort {
+        TocSort::None => {}
+        TocSort::Alpha => {
+            subdir_order.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        }
+        TocSort::Modified => {
+            let base = src_dir.join(prefix);
+            subdir_order.sort_by_key(|d| path_mtime(&base.join(d)));
+        }
+    }
+
+    // Build the combined ordering of files and directories.
+    enum Slot {
+        File(usize),
+        Dir(usize),
+    }
+    let order: Vec<Slot> = if dirs_first {
+        (0..subdir_order.len())
+            .map(Slot::Dir)
+            .chain((0..direct.len()).map(Slot::File))
+            .collect()
+    } else {
+        (0..direct.len())
+            .map(Slot::File)
+            .chain((0..subdir_order.len()).map(Slot::Dir))
+            .collect()
+    };
+
     let mut items: Vec<BookItem> = Vec::new();
     let mut counter = start_idx;
 
-    // Direct files (already sorted from scan).
-    for rel_path in direct {
-        let content = std::fs::read_to_string(src_dir.join(rel_path)).unwrap_or_default();
-        let raw_stem = rel_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("Untitled");
-        // Strip the inner .excalidraw extension for files like "Drawing.excalidraw.md".
-        let name = raw_stem.strip_suffix(".excalidraw").unwrap_or(raw_stem).to_string();
-        let mut num = number_prefix.to_vec();
-        num.push(counter);
-        counter += 1;
-        items.push(BookItem::Chapter(Chapter {
-            name,
-            content,
-            number: Some(SectionNumber::new(num)),
-            sub_items: vec![],
-            path: Some(rel_path.clone()),
-            source_path: Some(rel_path.clone()),
-            parent_names: parent_names.to_vec(),
-        }));
-    }
+    for slot in order {
+        match slot {
+            Slot::File(i) => {
+                let rel_path = direct[i];
+                let content =
+                    std::fs::read_to_string(src_dir.join(rel_path)).unwrap_or_default();
+                let raw_stem = rel_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Untitled");
+                let name =
+                    raw_stem.strip_suffix(".excalidraw").unwrap_or(raw_stem).to_string();
+                let mut num = number_prefix.to_vec();
+                num.push(counter);
+                counter += 1;
+                items.push(BookItem::Chapter(Chapter {
+                    name,
+                    content,
+                    number: Some(SectionNumber::new(num)),
+                    sub_items: vec![],
+                    path: Some(rel_path.clone()),
+                    source_path: Some(rel_path.clone()),
+                    parent_names: parent_names.to_vec(),
+                }));
+            }
+            Slot::Dir(i) => {
+                let dir_name = &subdir_order[i];
+                let dir_files = &subdir_map[dir_name];
+                let subdir = prefix.join(dir_name);
+                let display = dir_name.replace(['-', '_'], " ");
+                let mut child_parents = parent_names.to_vec();
+                child_parents.push(display.clone());
 
-    // Subdirectories (BTreeMap keeps them sorted).
-    for (dir_name, dir_files) in subdirs {
-        let subdir = prefix.join(&dir_name);
-        let display = dir_name.replace(['-', '_'], " ");
+                // index.md or README.md becomes the section's own page.
+                let index_rel = subdir.join("index.md");
+                let readme_rel = subdir.join("README.md");
+                let (section_content, section_path, section_source) =
+                    if src_dir.join(&index_rel).exists() {
+                        let c = std::fs::read_to_string(src_dir.join(&index_rel))
+                            .unwrap_or_default();
+                        (c, Some(index_rel.clone()), Some(index_rel.clone()))
+                    } else if src_dir.join(&readme_rel).exists() {
+                        let c = std::fs::read_to_string(src_dir.join(&readme_rel))
+                            .unwrap_or_default();
+                        (c, Some(readme_rel.clone()), Some(readme_rel.clone()))
+                    } else {
+                        (String::new(), None, None)
+                    };
 
-        let mut child_parents = parent_names.to_vec();
-        child_parents.push(display.clone());
+                let children: Vec<PathBuf> = dir_files
+                    .iter()
+                    .filter(|f| **f != &index_rel && **f != &readme_rel)
+                    .map(|f| (*f).clone())
+                    .collect();
 
-        // index.md or README.md becomes the section's own page.
-        let index_rel = subdir.join("index.md");
-        let readme_rel = subdir.join("README.md");
-        let (section_content, section_path, section_source) =
-            if src_dir.join(&index_rel).exists() {
-                let c = std::fs::read_to_string(src_dir.join(&index_rel)).unwrap_or_default();
-                (c, Some(index_rel.clone()), Some(index_rel.clone()))
-            } else if src_dir.join(&readme_rel).exists() {
-                let c = std::fs::read_to_string(src_dir.join(&readme_rel)).unwrap_or_default();
-                (c, Some(readme_rel.clone()), Some(readme_rel.clone()))
-            } else {
-                (String::new(), None, None)
-            };
+                let mut my_num = number_prefix.to_vec();
+                my_num.push(counter);
+                counter += 1;
 
-        let children: Vec<PathBuf> = dir_files
-            .iter()
-            .filter(|f| **f != &index_rel && **f != &readme_rel)
-            .map(|f| (*f).clone())
-            .collect();
+                let sub_items = build_items(
+                    &children,
+                    src_dir,
+                    &subdir,
+                    &child_parents,
+                    &my_num,
+                    1,
+                    sort,
+                    dirs_first,
+                );
 
-        let mut my_num = number_prefix.to_vec();
-        my_num.push(counter);
-        counter += 1;
+                if sub_items.is_empty() && section_path.is_none() {
+                    continue; // empty draft directory — skip
+                }
 
-        let sub_items = build_items(&children, src_dir, &subdir, &child_parents, &my_num, 1);
-
-        if sub_items.is_empty() && section_path.is_none() {
-            continue; // empty draft directory — skip
+                items.push(BookItem::Chapter(Chapter {
+                    name: display,
+                    content: section_content,
+                    number: Some(SectionNumber::new(my_num)),
+                    sub_items,
+                    path: section_path,
+                    source_path: section_source,
+                    parent_names: parent_names.to_vec(),
+                }));
+            }
         }
-
-        items.push(BookItem::Chapter(Chapter {
-            name: display,
-            content: section_content,
-            number: Some(SectionNumber::new(my_num)),
-            sub_items,
-            path: section_path,
-            source_path: section_source,
-            parent_names: parent_names.to_vec(),
-        }));
     }
 
     items

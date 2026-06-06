@@ -120,6 +120,19 @@ private/
 - Subdirectories become nested sections in the sidebar, preserving the folder hierarchy. If a directory contains `index.md` or `README.md`, that file is used as the clickable section header; otherwise the section header is non-clickable (a draft chapter).
 - `.excalidraw.md` files found during the scan are included as Excalidraw viewer pages at the correct position in the hierarchy — they are not listed twice even if also linked from other chapters.
 
+**Sorting the generated TOC:**
+
+By default, entries appear in the order the filesystem returns them. Use `toc_sort` to change this:
+
+```toml
+[preprocessor.obsidian]
+generate_toc = true
+toc_sort = "alpha"      # "none" (filesystem order, default), "alpha" (alphabetical), "modified" (oldest mtime first)
+toc_dirs_first = true   # list subdirectory sections before files at each level (default: false)
+```
+
+`toc_sort = "modified"` sorts files by their modification timestamp. For directories, the directory's own mtime is used (which changes when files are directly added or removed from it).
+
 **Controlling insertion order:**
 
 Place the placeholder comment `<!-- mdbook-obsidian toc -->` inside `SUMMARY.md` to control where the auto-generated chapters appear relative to your manually listed chapters:
