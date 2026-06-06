@@ -1,0 +1,18 @@
+[package]
+name = "mdbook-obsidian"
+version = "0.1.0"
+edition = "2024"
+description = "An mdBook preprocessor that transforms Obsidian-style markdown syntax"
+license = "MIT"
+repository = "https://github.com/paddycup1/mdbook-obsidian"
+
+[[bin]]
+name = "mdbook-obsidian"
+path = "src/main.rs"
+
+[dependencies]
+mdbook-preprocessor = "0.5"
+anyhow = "1"
+regex = "1"
+serde_json = "1"
+urlencoding = "2"
