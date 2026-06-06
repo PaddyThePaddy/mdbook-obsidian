@@ -298,9 +298,15 @@ fn render_markdown(items: &[BookItem], depth: usize) -> String {
                 {
                     format!("_excalidraw/{}.html", excalidraw_slug(&ch.name))
                 } else {
+                    // Percent-encode each path component so spaces and other
+                    // special characters don't break markdown link syntax.
                     path.with_extension("html")
-                        .to_string_lossy()
-                        .replace('\\', "/")
+                        .components()
+                        .map(|c| {
+                            urlencoding::encode(&c.as_os_str().to_string_lossy()).into_owned()
+                        })
+                        .collect::<Vec<_>>()
+                        .join("/")
                 };
                 out.push_str(&format!("{}- [{}]({})\n", indent, ch.name, href));
             } else {
