@@ -180,10 +180,61 @@ hard_line_breaks = true
 
 With this setting, every single newline between two non-empty lines is treated as a hard break (`<br>`). Blank lines (paragraph separators), lines already ending with `  ` or `\`, and content inside fenced code blocks are left untouched.
 
+### Obsidian-flavored syntax
+
+Enable this feature to convert Obsidian-specific markdown into standard HTML:
+
+```toml
+[preprocessor.obsidian]
+obsidian_syntax = true
+```
+
+The following syntax is transformed:
+
+| Syntax | Result |
+|--------|--------|
+| `%%hidden text%%` | Removed (inline or multi-line) |
+| `==highlighted==` | `<mark>highlighted</mark>` |
+| `[[Note Name]]` | `[Note Name](Note%20Name.md)` |
+| `[[Note Name\|Display]]` | `[Display](Note%20Name.md)` |
+| `[[Note Name#Heading]]` | `[Note Name](Note%20Name.md#heading)` |
+| `> [!note] Title` | Styled callout block |
+
+**Comments** (`%%...%%`) can span multiple lines and are fully removed from output. Content inside fenced code blocks is never touched.
+
+**Highlights** (`==text==`) become `<mark>` elements. Triple-equals (`===`) and code spans are left untouched.
+
+**Wikilinks** (`[[Note Name]]`) become regular markdown links. Embeds (`![[...]]`) and excalidraw links are left unchanged for other passes to handle.
+
+**Callouts** (`> [!type]`) are converted to styled HTML blocks. Supported types and their aliases:
+
+| Type | Aliases |
+|------|---------|
+| `note` | — |
+| `abstract` | `summary`, `tldr` |
+| `info`, `todo` | — |
+| `tip` | `hint`, `important` |
+| `success` | `check`, `done` |
+| `question` | `help`, `faq` |
+| `warning` | `caution`, `attention` |
+| `failure` | `fail`, `missing` |
+| `danger` | `error` |
+| `bug`, `example`, `quote` | (`quote` alias: `cite`) |
+
+Add `+` after the type for an expanded foldable callout, or `-` for collapsed:
+
+```markdown
+> [!tip]+ Expanded by default
+> Content here
+
+> [!warning]- Click to expand
+> This is hidden initially
+```
+
+Foldable callouts use the native `<details>`/`<summary>` HTML elements and require no JavaScript. A small inline `<style>` block is injected into pages that contain callouts; you can override these styles with your own `additional-css`.
+
 ## Roadmap
 
-- [ ] Wikilink conversion for regular notes: `[[Note Name]]` → `[Note Name](note-name.md)`
-- [ ] Obsidian callout/admonition blocks
 - [ ] Tag stripping or conversion
 - [ ] Excalidraw: self-hosted CDN fallback for air-gapped deployments
 - [ ] Excalidraw: collision handling when two files share the same stem

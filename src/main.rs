@@ -1,6 +1,7 @@
 mod anchors;
 mod breaks;
 mod excalidraw;
+mod obsidian_syntax;
 mod toc;
 
 use std::collections::HashSet;
@@ -190,6 +191,30 @@ impl Preprocessor for ObsidianPreprocessor {
                     }
                     let heading = format!("# {}\n\n", chapter.name);
                     chapter.content.insert_str(0, &heading);
+                }
+            });
+        }
+
+        // --- Pass 5: Obsidian-flavored syntax ---------------------------------
+        let obsidian_syntax = ctx
+            .config
+            .get::<bool>("preprocessor.obsidian.obsidian_syntax")
+            .unwrap_or(None)
+            .unwrap_or(false);
+
+        if obsidian_syntax {
+            book.for_each_mut(|item| {
+                if let BookItem::Chapter(chapter) = item {
+                    let path_str = chapter
+                        .path
+                        .as_ref()
+                        .and_then(|p| p.to_str())
+                        .unwrap_or("");
+                    if path_str.is_empty() || path_str.starts_with("_excalidraw/") {
+                        return;
+                    }
+                    chapter.content =
+                        obsidian_syntax::process(&chapter.content, verbose);
                 }
             });
         }
