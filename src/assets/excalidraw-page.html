@@ -1,3 +1,40 @@
+<style>
+@font-face {
+  font-family: 'Virgil';
+  src: url('https://unpkg.com/@excalidraw/excalidraw@0.17.6/dist/excalidraw-assets/Virgil.woff2') format('woff2');
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Cascadia';
+  src: url('https://unpkg.com/@excalidraw/excalidraw@0.17.6/dist/excalidraw-assets/Cascadia.woff2') format('woff2');
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Assistant';
+  src: url('https://unpkg.com/@excalidraw/excalidraw@0.17.6/dist/excalidraw-assets/Assistant-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Assistant';
+  src: url('https://unpkg.com/@excalidraw/excalidraw@0.17.6/dist/excalidraw-assets/Assistant-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Assistant';
+  src: url('https://unpkg.com/@excalidraw/excalidraw@0.17.6/dist/excalidraw-assets/Assistant-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Assistant';
+  src: url('https://unpkg.com/@excalidraw/excalidraw@0.17.6/dist/excalidraw-assets/Assistant-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+}
+</style>
+
 <div id="excalidraw-root" style="width:100%;height:80vh;border-radius:4px;overflow:hidden;"></div>
 
 <script type="application/json" id="excalidraw-scene">{{SCENE_JSON}}</script>
@@ -9,6 +46,26 @@
     reactDom:   'https://unpkg.com/react-dom@18/umd/react-dom.production.min.js',
     excalidraw: 'https://unpkg.com/@excalidraw/excalidraw@0.17.6/dist/excalidraw.production.min.js',
   };
+
+  // Font family IDs added in Excalidraw ≥0.18 that v0.17.6 doesn't know.
+  // Map them to visually similar families that v0.17.6 supports (1-4).
+  var FONT_FAMILY_MAP = {
+    5: 1,  // Excalifont → Virgil (both hand-drawn)
+    6: 4,  // Nunito → Assistant (both clean sans-serif)
+    7: 2,  // Lilita One → Helvetica
+    8: 3,  // Comic Shanns → Cascadia (both code-like)
+    9: 2,  // Liberation Sans → Helvetica
+  };
+
+  function patchElements(elements) {
+    if (!elements) return elements;
+    return elements.map(function (el) {
+      if (el.type === 'text' && FONT_FAMILY_MAP[el.fontFamily] !== undefined) {
+        return Object.assign({}, el, { fontFamily: FONT_FAMILY_MAP[el.fontFamily] });
+      }
+      return el;
+    });
+  }
 
   function loadScript(src, cb) {
     var s = document.createElement('script');
@@ -27,7 +84,7 @@
     var root  = ReactDOM.createRoot(document.getElementById('excalidraw-root'));
     root.render(React.createElement(ExcalidrawLib.Excalidraw, {
       initialData: {
-        elements: scene.elements || [],
+        elements: patchElements(scene.elements || []),
         appState:  Object.assign({}, scene.appState, { theme: isDark() ? 'dark' : 'light' }),
         files:     scene.files || {},
       },
