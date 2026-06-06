@@ -1,27 +1,41 @@
 # mdbook-obsidian
 
-An [mdBook](https://rust-lang.github.io/mdBook/) preprocessor that transforms [Obsidian](https://obsidian.md/)-style markdown syntax so it renders correctly in mdBook.
+An [mdBook](https://rust-lang.github.io/mdBook/) preprocessor that makes Obsidian-flavored markdown render correctly in mdBook — normalizing links, converting Obsidian syntax, generating a table of contents, and embedding Excalidraw diagrams.
 
-**Warning: This repo is completed drafted by AI agent. Do not use it in production.**
+> **Warning:** This repo was drafted by an AI agent. Do not use it in production.
+
+## Table of Contents
+
+- [Features](#features)
+  - [Always-on](#always-on)
+  - [Optional](#optional)
+- [Installation](#installation)
+- [Configuration](#configuration)
+  - [Quick reference](#quick-reference)
+  - [Debugging](#debugging-verbose)
+  - [Automatic TOC](#automatic-toc-generate_toc)
+  - [Auto heading insertion](#auto-heading-insertion-insert_heading)
+  - [Hard line breaks](#hard-line-breaks-hard_line_breaks)
+  - [Obsidian-flavored syntax](#obsidian-flavored-syntax-obsidian_syntax)
+- [Roadmap](#roadmap)
+- [License](#license)
 
 ## Features
 
-### Internal link normalization
+### Always-on
 
-Obsidian encodes spaces in link paths as `%20` and preserves the original file casing. mdBook generates heading IDs that are lowercase and hyphenated. This preprocessor aligns anchor fragments so in-page links resolve correctly:
+These run automatically with no configuration required.
+
+**Internal link normalization** — Obsidian encodes spaces as `%20` and preserves original casing; mdBook generates lowercase, hyphenated heading IDs. The preprocessor aligns anchor fragments so in-page links resolve correctly:
 
 | Before | After |
 |--------|-------|
 | `[Section](#Grade%201%20-%20Color)` | `[Section](#grade-1---color)` |
 | `[Link](Note.md#Grade%201)` | `[Link](Note.md#grade-1)` |
 
-Image links and file paths are left untouched — only `#fragment` portions are normalized. External URLs, links inside fenced code blocks, and links inside inline code spans are also unchanged.
+Image links, external URLs, links inside fenced code blocks, and inline code spans are left untouched — only `#fragment` portions are normalized.
 
-### Excalidraw viewer pages
-
-Links and wikilinks that point to `.excalidraw` files are automatically converted into navigable viewer pages. No extra files need to be added to your book — the viewer HTML is compiled into the preprocessor binary.
-
-**Supported link formats:**
+**Excalidraw viewer pages** — Links and wikilinks pointing to `.excalidraw` files are automatically converted into navigable viewer pages. The viewer HTML is compiled into the binary; no extra files are needed.
 
 | Markdown source | Result |
 |---|---|
@@ -29,167 +43,28 @@ Links and wikilinks that point to `.excalidraw` files are automatically converte
 | `[[My Drawing.excalidraw\|See diagram]]` | Link with custom text |
 | `[diagram](My%20Drawing.excalidraw)` | Link to viewer page |
 
-The viewer page loads [React](https://react.dev/) and [@excalidraw/excalidraw](https://www.npmjs.com/package/@excalidraw/excalidraw) from a CDN and renders the drawing in read-only mode inside mdBook's normal page chrome (sidebar and navigation are preserved). The theme (light/dark) is read from mdBook's active theme automatically.
+The viewer loads React and Excalidraw from a CDN, renders the drawing in read-only mode, and inherits mdBook's active light/dark theme. The published book must be reachable from the internet for the browser to fetch the CDN scripts.
 
-**Requirements:** the published book must be accessible from the internet so the browser can reach the CDN scripts.
+---
 
-## Installation
+### Optional
 
-### From source
-`
-```sh
-cargo install --path .
-```
+These are disabled by default and enabled per feature flag in `book.toml`.
 
-### From crates.io (once published)
+| Feature | Option | Default |
+|---------|--------|---------|
+| Automatic TOC generation | `generate_toc` | `false` |
+| Auto heading insertion | `insert_heading` | `false` |
+| Hard line breaks | `hard_line_breaks` | `false` |
+| Obsidian-flavored syntax | `obsidian_syntax` | `false` |
 
-```sh
-cargo install mdbook-obsidian
-```
+**Automatic TOC generation** — Scans `src/` and adds any markdown file not already listed in `SUMMARY.md` as a navigable chapter. The folder hierarchy is reflected in the sidebar. Subdirectories with an `index.md` or `README.md` become clickable section headers; otherwise the section header is non-clickable.
 
-## Configuration
+**Auto heading insertion** — When a chapter's content does not begin with a top-level `# Heading`, one is inserted using the chapter's file name. Excalidraw pages and draft section headers are not affected.
 
-Add the preprocessor to your `book.toml`:
+**Hard line breaks** — Converts every single newline between non-empty lines to a hard break (`<br>`). Blank lines, lines already ending with two spaces or `\`, and fenced code block content are untouched.
 
-```toml
-[preprocessor.obsidian]
-```
-
-That is all that is required. Run `mdbook build` as usual.
-
-### Verbose / debug logging
-
-Set `verbose = true` to print every link transformation to stderr during the build:
-
-```toml
-[preprocessor.obsidian]
-verbose = true
-```
-
-Then build and filter the output:
-
-```sh
-mdbook build 2>&1 | grep mdbook-obsidian
-```
-
-Each transformed link prints one line showing the before and after:
-
-```
-[mdbook-obsidian] link: #Grade%201%20-%20Color  =>  #grade-1---color
-```
-
-Links that are unchanged (external URLs, image links, already-normalized anchors) produce no output.
-
-## Workflow
-
-1. Write notes in Obsidian.
-2. Copy or symlink the note files into your mdBook `src/` directory.
-3. Build with `mdbook build` — the preprocessor normalizes every internal link before rendering.
-
-### Automatic TOC generation
-
-When enabled, the preprocessor scans the `src/` directory and automatically adds any markdown files that are **not listed in `SUMMARY.md`** as navigable book chapters. The file tree is reflected in the sidebar as a nested hierarchy.
-
-Enable it in `book.toml`:
-
-```toml
-[preprocessor.obsidian]
-generate_toc = true
-```
-
-**Controlling which files are included:**
-
-Files matched by `.gitignore` (at any level) are always excluded. To add extra ignore patterns specific to the book, create an ignore file and reference it:
-
-```toml
-[preprocessor.obsidian]
-generate_toc = true
-toc_ignore_file = ".mdignore"   # name of your extra ignore file
-```
-
-The ignore file uses the same syntax as `.gitignore`. For example, to exclude draft files:
-
-```
-*-draft.md
-private/
-```
-
-**Directory structure:**
-
-- Files at the root of `src/` become top-level chapters.
-- Subdirectories become nested sections in the sidebar, preserving the folder hierarchy. If a directory contains `index.md` or `README.md`, that file is used as the clickable section header; otherwise the section header is non-clickable (a draft chapter).
-- `.excalidraw.md` files found during the scan are included as Excalidraw viewer pages at the correct position in the hierarchy — they are not listed twice even if also linked from other chapters.
-
-**Sorting the generated TOC:**
-
-By default, entries appear in the order the filesystem returns them. Use `toc_sort` to change this:
-
-```toml
-[preprocessor.obsidian]
-generate_toc = true
-toc_sort = "alpha"      # "none" (filesystem order, default), "alpha" (alphabetical), "modified" (oldest mtime first)
-toc_dirs_first = true   # list subdirectory sections before files at each level (default: false)
-```
-
-`toc_sort = "modified"` sorts files by their modification timestamp. For directories, the directory's own mtime is used (which changes when files are directly added or removed from it).
-
-**Controlling insertion order:**
-
-Place the placeholder comment `<!-- mdbook-obsidian toc -->` inside `SUMMARY.md` to control where the auto-generated chapters appear relative to your manually listed chapters:
-
-```markdown
-- [Introduction](intro.md)
-- [Setup](setup.md)
-
-<!-- mdbook-obsidian toc -->
-
-- [Changelog](changelog.md)
-```
-
-Auto-discovered chapters are inserted at the placeholder's position. If the placeholder is absent, discovered chapters are appended at the end.
-
-**Inline TOC list:**
-
-The same placeholder can also be placed inside any regular chapter file. There it is replaced with a nested markdown list of all auto-discovered chapters, useful for a landing page or index:
-
-```markdown
-## Auto-discovered notes
-
-<!-- mdbook-obsidian toc -->
-```
-
-### Auto heading insertion
-
-When a chapter's content does not begin with a top-level heading (`# …`), the preprocessor inserts one derived from the chapter's file name. Enable it in `book.toml`:
-
-```toml
-[preprocessor.obsidian]
-insert_heading = true
-```
-
-Excalidraw viewer pages and draft section headers (directories without an index file) are not affected.
-
-### Hard line breaks
-
-Obsidian users often write with single newlines expecting visible line breaks. Standard CommonMark only creates a hard break when a line ends with two or more spaces. Enable this conversion with:
-
-```toml
-[preprocessor.obsidian]
-hard_line_breaks = true
-```
-
-With this setting, every single newline between two non-empty lines is treated as a hard break (`<br>`). Blank lines (paragraph separators), lines already ending with `  ` or `\`, and content inside fenced code blocks are left untouched.
-
-### Obsidian-flavored syntax
-
-Enable this feature to convert Obsidian-specific markdown into standard HTML:
-
-```toml
-[preprocessor.obsidian]
-obsidian_syntax = true
-```
-
-The following syntax is transformed:
+**Obsidian-flavored syntax** — Converts Obsidian-specific markdown to standard HTML:
 
 | Syntax | Result |
 |--------|--------|
@@ -200,13 +75,154 @@ The following syntax is transformed:
 | `[[Note Name#Heading]]` | `[Note Name](Note%20Name.md#heading)` |
 | `> [!note] Title` | Styled callout block |
 
-**Comments** (`%%...%%`) can span multiple lines and are fully removed from output. Content inside fenced code blocks is never touched.
+---
 
-**Highlights** (`==text==`) become `<mark>` elements. Triple-equals (`===`) and code spans are left untouched.
+## Installation
 
-**Wikilinks** (`[[Note Name]]`) become regular markdown links. Embeds (`![[...]]`) and excalidraw links are left unchanged for other passes to handle.
+### From source
 
-**Callouts** (`> [!type]`) are converted to styled HTML blocks. Supported types and their aliases:
+```sh
+cargo install --path . --locked
+```
+
+---
+
+## Configuration
+
+Add the preprocessor to `book.toml` to activate it:
+
+```toml
+[preprocessor.obsidian]
+```
+
+All options are optional. Below is a full reference followed by per-feature details.
+
+### Quick reference
+
+```toml
+[preprocessor.obsidian]
+verbose          = false        # print every link transformation to stderr
+
+generate_toc     = false        # auto-discover uncovered .md files
+toc_ignore_file  = ".mdignore"  # extra ignore file (gitignore syntax)
+toc_sort         = "none"       # "none" | "alpha" | "modified"
+toc_dirs_first   = false        # list directories before files at each level
+
+insert_heading   = false        # insert # Heading when chapter has none
+hard_line_breaks = false        # treat single newlines as <br>
+obsidian_syntax  = false        # convert Obsidian-flavored markdown
+```
+
+---
+
+### Debugging (`verbose`)
+
+```toml
+[preprocessor.obsidian]
+verbose = true
+```
+
+Prints one line per transformed link to stderr:
+
+```
+[mdbook-obsidian] link: #Grade%201%20-%20Color  =>  #grade-1---color
+```
+
+Build and filter:
+
+```sh
+mdbook build 2>&1 | grep mdbook-obsidian
+```
+
+---
+
+### Automatic TOC (`generate_toc`)
+
+```toml
+[preprocessor.obsidian]
+generate_toc = true
+```
+
+Files matched by `.gitignore` at any level are always excluded. To add book-specific ignore patterns, create an ignore file (gitignore syntax) and reference it:
+
+```toml
+toc_ignore_file = ".mdignore"
+```
+
+Example `.mdignore`:
+
+```
+*-draft.md
+private/
+```
+
+**Insertion point** — Place `<!-- mdbook-obsidian toc -->` in `SUMMARY.md` to control where auto-generated chapters appear:
+
+```markdown
+- [Introduction](intro.md)
+
+<!-- mdbook-obsidian toc -->
+
+- [Changelog](changelog.md)
+```
+
+Without the placeholder, discovered chapters are appended at the end.
+
+**Inline TOC list** — The same placeholder inside a chapter file is replaced with a nested markdown list of all auto-discovered chapters, useful for index pages:
+
+```markdown
+## Notes
+
+<!-- mdbook-obsidian toc -->
+```
+
+**Sorting**
+
+```toml
+toc_sort      = "alpha"   # "none" (filesystem order) | "alpha" | "modified"
+toc_dirs_first = true     # directories before files at each level
+```
+
+`modified` sorts by file modification time (oldest first). For directories, the directory's own mtime is used.
+
+---
+
+### Auto heading insertion (`insert_heading`)
+
+```toml
+[preprocessor.obsidian]
+insert_heading = true
+```
+
+Inserts `# <filename>` at the top of any chapter that does not already start with a level-1 heading.
+
+---
+
+### Hard line breaks (`hard_line_breaks`)
+
+```toml
+[preprocessor.obsidian]
+hard_line_breaks = true
+```
+
+Treats every single newline between non-empty lines as a hard break. Useful when your Obsidian notes rely on single-newline line breaks that CommonMark otherwise ignores.
+
+---
+
+### Obsidian-flavored syntax (`obsidian_syntax`)
+
+```toml
+[preprocessor.obsidian]
+obsidian_syntax = true
+```
+
+**Comments** (`%%...%%`) are removed, including multi-line spans. Content inside fenced code blocks is never touched.
+
+**Highlights** (`==text==`) become `<mark>text</mark>`. Triple-equals (`===`) and inline code spans are left untouched.
+
+**Wikilinks** (`[[...]]`) become regular markdown links. Embeds (`![[...]]`) and Excalidraw wikilinks are left unchanged for other passes to handle.
+
+**Callouts** (`> [!type]`) are converted to styled HTML blocks. Supported types and aliases:
 
 | Type | Aliases |
 |------|---------|
@@ -221,7 +237,7 @@ The following syntax is transformed:
 | `danger` | `error` |
 | `bug`, `example`, `quote` | (`quote` alias: `cite`) |
 
-Add `+` after the type for an expanded foldable callout, or `-` for collapsed:
+Append `+` for an expanded foldable callout or `-` for collapsed:
 
 ```markdown
 > [!tip]+ Expanded by default
@@ -231,7 +247,9 @@ Add `+` after the type for an expanded foldable callout, or `-` for collapsed:
 > This is hidden initially
 ```
 
-Foldable callouts use the native `<details>`/`<summary>` HTML elements and require no JavaScript. A small inline `<style>` block is injected into pages that contain callouts; you can override these styles with your own `additional-css`.
+Foldable callouts use the native `<details>`/`<summary>` elements and require no JavaScript. A small `<style>` block is injected into pages that contain callouts; override it with your own `additional-css` in `book.toml`.
+
+---
 
 ## Roadmap
 
