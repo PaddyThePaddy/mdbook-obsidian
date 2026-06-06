@@ -38,9 +38,11 @@ impl Preprocessor for ObsidianPreprocessor {
         });
 
         // --- Pass 2: Excalidraw link detection and rewrite ---------------
-        // Matches [text](path.excalidraw) — image variant ![ ] handled the same way.
+        // Matches [text](path.excalidraw) and [text](path.excalidraw.md).
+        // The .md variant appears when the Obsidian Excalidraw plugin stores drawings as
+        // .excalidraw.md files; mdBook then converts .md → .html, producing broken links.
         let excalidraw_link_re =
-            Regex::new(r"(!?)\[([^\]]*)\]\(([^)]*\.excalidraw)\)").expect("valid regex");
+            Regex::new(r"(!?)\[([^\]]*)\]\(([^)]*\.excalidraw(?:\.md)?)\)").expect("valid regex");
         // Matches [[path.excalidraw]] and ![[path.excalidraw]] and [[path.excalidraw|alias]]
         let excalidraw_wiki_re =
             Regex::new(r"(!?)\[\[([^\]]+\.excalidraw)(?:\|([^\]]*))?\]\]").expect("valid regex");
@@ -80,17 +82,16 @@ impl Preprocessor for ObsidianPreprocessor {
             if !seen.insert(r.slug.clone()) {
                 continue;
             }
-            match std::fs::read_to_string(&r.file_path) {
-                Ok(json) => book.items.push(BookItem::Chapter(make_excalidraw_chapter(r, &json))),
-                Err(e) => {
+            let chapter = match read_excalidraw_json(&r.file_path) {
+                Ok(json) => make_excalidraw_chapter(r, &json),
+                Err(msg) => {
                     if verbose {
-                        eprintln!(
-                            "[mdbook-obsidian] cannot read {}: {e}",
-                            r.file_path.display()
-                        );
+                        eprintln!("[mdbook-obsidian] {}: {msg}", r.file_path.display());
                     }
+                    make_excalidraw_error_chapter(r, &msg)
                 }
-            }
+            };
+            book.items.push(BookItem::Chapter(chapter));
         }
 
         Ok(book)
@@ -147,6 +148,94 @@ fn make_excalidraw_chapter(r: &ExcalidrawRef, json: &str) -> Chapter {
         source_path: None,
         parent_names: vec![],
     }
+}
+
+/// Build a synthetic chapter that shows a human-readable error when the scene
+/// data can't be extracted (e.g. compressed format not yet supported).
+fn make_excalidraw_error_chapter(r: &ExcalidrawRef, error: &str) -> Chapter {
+    let html = format!(
+        "<div style=\"padding:2rem;border:2px solid #c00;border-radius:6px;\
+         background:#fff5f5;color:#900;font-family:sans-serif\">\
+         <h2>Cannot display: {name}</h2><p>{error}</p></div>",
+        name = &r.name,
+        error = error,
+    );
+    Chapter {
+        name: r.name.clone(),
+        content: html,
+        number: None,
+        sub_items: vec![],
+        path: Some(PathBuf::from(format!("_excalidraw/{}.md", r.slug))),
+        source_path: None,
+        parent_names: vec![],
+    }
+}
+
+/// Read the Excalidraw JSON from disk, returning `Err` with a human-readable
+/// message when the file is missing, compressed, or in an unrecognised format.
+///
+/// Handles two on-disk formats:
+///   - `name.excalidraw`    — the whole file is a raw JSON object
+///   - `name.excalidraw.md` — JSON is inside a ` ```json … ``` ` block
+/// Falls back to the `.md` variant automatically when the plain path isn't found.
+fn read_excalidraw_json(file_path: &Path) -> Result<String, String> {
+    let md_path;
+    let paths: &[&Path] = if file_path.to_str().map_or(false, |s| s.ends_with(".md")) {
+        &[file_path]
+    } else {
+        md_path = PathBuf::from(format!("{}.md", file_path.display()));
+        &[file_path, md_path.as_path()]
+    };
+
+    for &path in paths {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if path.to_str().map_or(false, |s| s.ends_with(".excalidraw.md")) {
+                return extract_json_from_excalidraw_md(&content).ok_or_else(|| {
+                    if content.contains("```compressed-json") {
+                        "Excalidraw file uses compressed format. \
+                         Open it in Obsidian and run \
+                         \"Decompress current Excalidraw file\" from the command palette, \
+                         then rebuild the book."
+                            .to_string()
+                    } else {
+                        format!(
+                            "No ```json block found in {}. \
+                             The file may use an unsupported Excalidraw format.",
+                            path.display()
+                        )
+                    }
+                });
+            } else {
+                return Ok(content);
+            }
+        }
+    }
+    Err(format!("Excalidraw file not found: {}", file_path.display()))
+}
+
+/// Extract the raw JSON object from an `.excalidraw.md` file.
+///
+/// Supports two formats produced by the Obsidian Excalidraw plugin:
+///   - Uncompressed: scene JSON inside a ` ```json ` fenced block
+///   - Compressed:   LZ-string (compressToBase64) data inside a ` ```compressed-json ` block
+fn extract_json_from_excalidraw_md(content: &str) -> Option<String> {
+    // Uncompressed path — plain JSON block.
+    if let Some(json) = extract_fenced_block(content, "```json\n") {
+        return Some(json);
+    }
+    // Compressed path — LZ-string base64 encoded.
+    if let Some(compressed) = extract_fenced_block(content, "```compressed-json\n") {
+        let u16s = lz_str::decompress_from_base64(&compressed)?;
+        return String::from_utf16(&u16s).ok();
+    }
+    None
+}
+
+fn extract_fenced_block(content: &str, marker: &str) -> Option<String> {
+    let start = content.find(marker)? + marker.len();
+    let rest = &content[start..];
+    let end = rest.find("\n```")?;
+    Some(rest[..end].to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -221,12 +310,20 @@ fn replace_excalidraw_wikilinks(
             let decoded = urlencoding::decode(raw_path)
                 .unwrap_or(std::borrow::Cow::Borrowed(raw_path));
             let path = Path::new(decoded.as_ref());
+            // Wikilinks always end in .excalidraw, so file_stem strips it correctly.
             let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("drawing");
             let slug = excalidraw_slug(stem);
             let display = alias.unwrap_or(stem).to_string();
             let href = excalidraw_href(&slug, depth);
 
-            let file_path = chapter_dir.join(decoded.as_ref());
+            // The file on disk may be name.excalidraw or name.excalidraw.md — try both.
+            let base = chapter_dir.join(decoded.as_ref());
+            let file_path = if base.exists() {
+                base.clone()
+            } else {
+                PathBuf::from(format!("{}.md", base.display()))
+            };
+
             if verbose {
                 eprintln!("[mdbook-obsidian] excalidraw wikilink: {raw_path}  =>  {href}");
             }
@@ -236,7 +333,7 @@ fn replace_excalidraw_wikilinks(
         .into_owned()
 }
 
-/// Replace `[text](file.excalidraw)` markdown links.
+/// Replace `[text](file.excalidraw)` and `[text](file.excalidraw.md)` markdown links.
 fn replace_excalidraw_links(
     link_re: &Regex,
     text: &str,
@@ -254,17 +351,22 @@ fn replace_excalidraw_links(
             let decoded = urlencoding::decode(raw_path)
                 .unwrap_or(std::borrow::Cow::Borrowed(raw_path));
             let path = Path::new(decoded.as_ref());
-            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("drawing");
+
+            // file_stem strips the last extension only:
+            //   name.excalidraw     → stem = "name"
+            //   name.excalidraw.md  → stem = "name.excalidraw" — strip again
+            let stem_raw = path.file_stem().and_then(|s| s.to_str()).unwrap_or("drawing");
+            let stem = stem_raw.strip_suffix(".excalidraw").unwrap_or(stem_raw);
+
             let slug = excalidraw_slug(stem);
             let href = excalidraw_href(&slug, depth);
-
             let file_path = chapter_dir.join(decoded.as_ref());
+
             if verbose {
                 eprintln!("[mdbook-obsidian] excalidraw link: {raw_path}  =>  {href}");
             }
             refs.push(ExcalidrawRef { file_path, slug, name: stem.to_string() });
 
-            // Preserve the ! prefix so it renders as a link, not a broken image.
             let _ = bang; // image-style embed treated identically — becomes a link
             format!("[{}]({})", link_text, href)
         })
@@ -540,7 +642,7 @@ mod tests {
     }
 
     fn excalidraw_link_re() -> Regex {
-        Regex::new(r"(!?)\[([^\]]*)\]\(([^)]*\.excalidraw)\)").unwrap()
+        Regex::new(r"(!?)\[([^\]]*)\]\(([^)]*\.excalidraw(?:\.md)?)\)").unwrap()
     }
 
     #[test]
@@ -600,6 +702,43 @@ mod tests {
         );
         assert_eq!(got, "[diagram](_excalidraw/my-diagram.html)");
         assert_eq!(refs[0].slug, "my-diagram");
+    }
+
+    #[test]
+    fn replaces_excalidraw_md_link() {
+        // .excalidraw.md format — the link mdBook would have rendered as .excalidraw.html
+        let mut refs = vec![];
+        let got = replace_excalidraw_links(
+            &excalidraw_link_re(),
+            "[Castle word puzzle.excalidraw](../Castle%20word%20puzzle.excalidraw.md)",
+            Path::new("/src/a/b"),
+            2,
+            false,
+            &mut refs,
+        );
+        assert_eq!(got, "[Castle word puzzle.excalidraw](../../_excalidraw/castle-word-puzzle.html)");
+        assert_eq!(refs[0].slug, "castle-word-puzzle");
+        assert_eq!(refs[0].name, "Castle word puzzle");
+    }
+
+    #[test]
+    fn extracts_json_from_excalidraw_md() {
+        let content = "---\nexcalidraw-plugin: parsed\n---\n\n%%\n# Drawing\n```json\n{\"type\":\"excalidraw\"}\n```\n%%\n";
+        let json = extract_json_from_excalidraw_md(content).unwrap();
+        assert_eq!(json, r#"{"type":"excalidraw"}"#);
+    }
+
+    #[test]
+    fn decompresses_compressed_json_from_excalidraw_md() {
+        let json = r#"{"type":"excalidraw","version":2,"elements":[]}"#;
+        // Compress using the same algorithm the Obsidian plugin uses (LZ-string compressToBase64).
+        let utf16: Vec<u16> = json.encode_utf16().collect();
+        let compressed_str = lz_str::compress_to_base64(&utf16);
+        let content = format!(
+            "---\nexcalidraw-plugin: parsed\n---\n\n# Drawing\n```compressed-json\n{compressed_str}\n```\n"
+        );
+        let result = extract_json_from_excalidraw_md(&content).unwrap();
+        assert_eq!(result, json);
     }
 
     #[test]
