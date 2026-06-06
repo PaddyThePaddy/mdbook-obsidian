@@ -46,6 +46,29 @@ Add the preprocessor to your `book.toml`:
 
 That is all that is required. Run `mdbook build` as usual.
 
+### Verbose / debug logging
+
+Set `verbose = true` to print every link transformation to stderr during the build:
+
+```toml
+[preprocessor.obsidian]
+verbose = true
+```
+
+Then build and filter the output:
+
+```sh
+mdbook build 2>&1 | grep mdbook-obsidian
+```
+
+Each transformed link prints one line showing the before and after:
+
+```
+[mdbook-obsidian] link: #Grade%201%20-%20Color  =>  #grade-1---color
+```
+
+Links that are unchanged (external URLs, image links, already-normalized anchors) produce no output.
+
 ## Workflow
 
 1. Write notes in Obsidian.

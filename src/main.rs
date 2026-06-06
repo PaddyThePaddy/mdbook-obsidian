@@ -13,11 +13,18 @@ impl Preprocessor for ObsidianPreprocessor {
         "obsidian"
     }
 
-    fn run(&self, _ctx: &PreprocessorContext, mut book: Book) -> Result<Book> {
-        let re = Regex::new(r"\[([^\]]*)\]\(([^)]+)\)").expect("valid regex");
+    fn run(&self, ctx: &PreprocessorContext, mut book: Book) -> Result<Book> {
+        let verbose = ctx
+            .config
+            .get::<bool>("preprocessor.obsidian.verbose")
+            .unwrap_or(None)
+            .unwrap_or(false);
+
+        // Capture optional leading `!` so we can skip image links.
+        let re = Regex::new(r"(!?)\[([^\]]*)\]\(([^)]+)\)").expect("valid regex");
         book.for_each_mut(|item| {
             if let BookItem::Chapter(chapter) = item {
-                chapter.content = process_content(&re, &chapter.content);
+                chapter.content = process_content(&re, &chapter.content, verbose);
             }
         });
         Ok(book)
@@ -30,7 +37,7 @@ impl Preprocessor for ObsidianPreprocessor {
 
 /// Process chapter content, transforming internal markdown links while leaving
 /// fenced code blocks and inline code spans untouched.
-fn process_content(re: &Regex, content: &str) -> String {
+fn process_content(re: &Regex, content: &str, verbose: bool) -> String {
     let trailing_newline = content.ends_with('\n');
     let mut result = String::with_capacity(content.len());
     let mut in_code_block = false;
@@ -61,7 +68,7 @@ fn process_content(re: &Regex, content: &str) -> String {
         } else if in_code_block {
             result.push_str(line);
         } else {
-            result.push_str(&transform_line(re, line));
+            result.push_str(&transform_line(re, line, verbose));
         }
     }
 
@@ -84,18 +91,18 @@ fn detect_fence(trimmed: &str) -> (bool, char, usize) {
 }
 
 /// Transform links in a single line, skipping inline code spans.
-fn transform_line(re: &Regex, line: &str) -> String {
+fn transform_line(re: &Regex, line: &str, verbose: bool) -> String {
     let mut result = String::new();
     let mut remaining = line;
 
     while !remaining.is_empty() {
         match remaining.find('`') {
             None => {
-                result.push_str(&replace_links(re, remaining));
+                result.push_str(&replace_links(re, remaining, verbose));
                 break;
             }
             Some(pos) => {
-                result.push_str(&replace_links(re, &remaining[..pos]));
+                result.push_str(&replace_links(re, &remaining[..pos], verbose));
                 remaining = &remaining[pos..];
 
                 let tick_count = remaining.chars().take_while(|&c| c == '`').count();
@@ -110,7 +117,7 @@ fn transform_line(re: &Regex, line: &str) -> String {
                     }
                     None => {
                         // Unclosed backtick run — treat rest as regular text
-                        result.push_str(&replace_links(re, remaining));
+                        result.push_str(&replace_links(re, remaining, verbose));
                         break;
                     }
                 }
@@ -121,40 +128,63 @@ fn transform_line(re: &Regex, line: &str) -> String {
     result
 }
 
-fn replace_links(re: &Regex, text: &str) -> String {
+fn replace_links(re: &Regex, text: &str, verbose: bool) -> String {
     re.replace_all(text, |caps: &regex::Captures| {
-        let link_text = &caps[1];
-        let url = &caps[2];
-        format!("[{}]({})", link_text, normalize_link(url))
+        let bang = &caps[1]; // "!" for images, "" for links
+        let link_text = &caps[2];
+        let url = &caps[3];
+
+        // Never touch image links — the file on disk keeps its original name.
+        if bang == "!" {
+            return format!("![{}]({})", link_text, url);
+        }
+
+        let new_url = normalize_link(url);
+        if verbose && new_url != url.as_ref() {
+            eprintln!("[mdbook-obsidian] link: {url}  =>  {new_url}");
+        }
+        format!("[{}]({})", link_text, new_url)
     })
     .into_owned()
 }
 
-/// Normalize an Obsidian internal link URL to the mdBook convention:
-/// URL-decode → lowercase → spaces to hyphens.
-/// External URLs and same-page anchors are returned unchanged.
+/// Normalize an Obsidian internal link URL for mdBook:
+/// - External URLs: unchanged.
+/// - Same-page anchors (`#Heading Name`): normalize only the fragment.
+/// - Cross-page links (`page.md` or `page.md#Heading`): normalize only the
+///   `#fragment` part; leave the file path as-is so existing file names are
+///   not broken.
 fn normalize_link(url: &str) -> String {
     if url.starts_with("http://")
         || url.starts_with("https://")
         || url.starts_with("//")
         || url.starts_with("mailto:")
-        || url.starts_with('#')
     {
         return url.to_owned();
     }
 
-    let (path, anchor) = match url.find('#') {
-        Some(i) => (&url[..i], &url[i..]),
-        None => (url, ""),
-    };
+    // Same-page anchor only — normalize the fragment.
+    if url.starts_with('#') {
+        return format!("#{}", normalize_fragment(&url[1..]));
+    }
 
-    let decoded = urlencoding::decode(path).unwrap_or(std::borrow::Cow::Borrowed(path));
-    let normalized = decoded.to_lowercase().replace(' ', "-");
-    format!("{}{}", normalized, anchor)
+    // Cross-page link: keep the file path, only normalize the anchor.
+    match url.find('#') {
+        None => url.to_owned(),
+        Some(i) => format!("{}#{}", &url[..i], normalize_fragment(&url[i + 1..])),
+    }
+}
+
+fn normalize_fragment(fragment: &str) -> String {
+    let decoded = urlencoding::decode(fragment).unwrap_or(std::borrow::Cow::Borrowed(fragment));
+    decoded.to_lowercase().replace(' ', "-")
 }
 
 fn main() {
-    eprintln!("[mdbook-obsidian] invoked with args: {:?}", std::env::args().collect::<Vec<_>>());
+    eprintln!(
+        "[mdbook-obsidian] invoked with args: {:?}",
+        std::env::args().collect::<Vec<_>>()
+    );
     let preprocessor = ObsidianPreprocessor;
     let args: Vec<String> = std::env::args().collect();
 
@@ -177,62 +207,86 @@ mod tests {
     use super::*;
 
     fn re() -> Regex {
-        Regex::new(r"\[([^\]]*)\]\(([^)]+)\)").unwrap()
+        // Must match the regex in `run`.
+        Regex::new(r"(!?)\[([^\]]*)\]\(([^)]+)\)").unwrap()
+    }
+
+    // --- image links: never transformed ---
+
+    #[test]
+    fn skips_image_links_with_encoded_path() {
+        let input = "![alt](Pasted%20Image%2020250424.png)";
+        let got = replace_links(&re(), input, false);
+        assert_eq!(got, input);
     }
 
     #[test]
-    fn normalizes_percent_encoded_spaces() {
-        let input = "[My Note](A%20file-name%20with%20space.md)";
-        let got = replace_links(&re(), input);
-        assert_eq!(got, "[My Note](a-file-name-with-space.md)");
+    fn skips_image_links_with_subdir() {
+        let input = "![screenshot](attachments/Pasted%20Image.png)";
+        let got = replace_links(&re(), input, false);
+        assert_eq!(got, input);
+    }
+
+    // --- same-page anchors ---
+
+    #[test]
+    fn normalizes_same_page_anchor_with_encoding() {
+        let input = "[Grade 1](#Grade%201%20-%20Color)";
+        let got = replace_links(&re(), input, false);
+        assert_eq!(got, "[Grade 1](#grade-1---color)");
     }
 
     #[test]
-    fn lowercases_plain_path() {
-        let input = "[Link](MyNote.md)";
-        let got = replace_links(&re(), input);
-        assert_eq!(got, "[Link](mynote.md)");
+    fn already_normalized_same_page_anchor_unchanged() {
+        let input = "[top](#top)";
+        let got = replace_links(&re(), input, false);
+        assert_eq!(got, "[top](#top)");
+    }
+
+    // --- cross-page links: file path untouched, anchor normalized ---
+
+    #[test]
+    fn file_path_left_unchanged() {
+        // The file on disk keeps its original name; only the anchor matters.
+        let input = "[Link](A%20file-name%20with%20space.md)";
+        let got = replace_links(&re(), input, false);
+        assert_eq!(got, input);
     }
 
     #[test]
-    fn preserves_anchor() {
-        let input = "[Link](My%20Note.md#section-title)";
-        let got = replace_links(&re(), input);
-        assert_eq!(got, "[Link](my-note.md#section-title)");
+    fn normalizes_anchor_in_cross_page_link() {
+        let input = "[Link](My%20Note.md#Grade%201%20-%20Color)";
+        let got = replace_links(&re(), input, false);
+        assert_eq!(got, "[Link](My%20Note.md#grade-1---color)");
     }
 
     #[test]
     fn skips_external_urls() {
         let input = "[Rust](https://www.rust-lang.org)";
-        let got = replace_links(&re(), input);
+        let got = replace_links(&re(), input, false);
         assert_eq!(got, "[Rust](https://www.rust-lang.org)");
     }
 
-    #[test]
-    fn skips_same_page_anchors() {
-        let input = "[top](#top)";
-        let got = replace_links(&re(), input);
-        assert_eq!(got, "[top](#top)");
-    }
+    // --- code block / inline code skipping ---
 
     #[test]
     fn skips_fenced_code_blocks() {
-        let input = "```\n[Link](Not%20Transformed.md)\n```";
-        let got = process_content(&re(), input);
+        let input = "```\n[Link](#Grade%201)\n```";
+        let got = process_content(&re(), input, false);
         assert_eq!(got, input);
     }
 
     #[test]
     fn skips_inline_code() {
-        let input = "text `[Link](Not%20Transformed.md)` end";
-        let got = transform_line(&re(), input);
-        assert_eq!(got, "text `[Link](Not%20Transformed.md)` end");
+        let input = "text `[Link](#Grade%201)` end";
+        let got = transform_line(&re(), input, false);
+        assert_eq!(got, "text `[Link](#Grade%201)` end");
     }
 
     #[test]
     fn transforms_outside_inline_code() {
-        let input = "[A](B%20C.md) and `code` and [D](E%20F.md)";
-        let got = transform_line(&re(), input);
-        assert_eq!(got, "[A](b-c.md) and `code` and [D](e-f.md)");
+        let input = "[A](#Grade%201) and `code` and [B](#Math%20Class)";
+        let got = transform_line(&re(), input, false);
+        assert_eq!(got, "[A](#grade-1) and `code` and [B](#math-class)");
     }
 }
