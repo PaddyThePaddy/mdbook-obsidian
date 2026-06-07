@@ -17,6 +17,7 @@ An [mdBook](https://rust-lang.github.io/mdBook/) preprocessor that makes Obsidia
   - [Auto heading insertion](#auto-heading-insertion-insert_heading)
   - [Hard line breaks](#hard-line-breaks-hard_line_breaks)
   - [Obsidian-flavored syntax](#obsidian-flavored-syntax-obsidian_syntax)
+  - [Backlinks](#backlinks-backlinks)
 - [Roadmap](#roadmap)
 - [License](#license)
 
@@ -57,6 +58,7 @@ These are disabled by default and enabled per feature flag in `book.toml`.
 | Auto heading insertion | `insert_heading` | `false` |
 | Hard line breaks | `hard_line_breaks` | `false` |
 | Obsidian-flavored syntax | `obsidian_syntax` | `false` |
+| Backlinks | `backlinks` | `false` |
 
 **Automatic TOC generation** — Scans `src/` and adds any markdown file not already listed in `SUMMARY.md` as a navigable chapter. The folder hierarchy is reflected in the sidebar. Subdirectories with an `index.md` or `README.md` become clickable section headers; otherwise the section header is non-clickable.
 
@@ -65,6 +67,8 @@ These are disabled by default and enabled per feature flag in `book.toml`.
 **Hard line breaks** — Converts every single newline between non-empty lines to a hard break (`<br>`). Blank lines, lines already ending with two spaces or `\`, and fenced code block content are untouched.
 
 **Obsidian-flavored syntax** — Converts Obsidian-specific markdown to standard HTML:
+
+**Backlinks** — Appends a `## Backlinks` section to each chapter listing every other chapter that links to it. Both standard markdown links (`[text](page.md)`) and wikilinks (`[[Page Name]]`) are detected. Links inside fenced code blocks are ignored.
 
 | Syntax | Result |
 |--------|--------|
@@ -111,6 +115,7 @@ toc_dirs_first   = false        # list directories before files at each level
 insert_heading   = false        # insert # Heading when chapter has none
 hard_line_breaks = false        # treat single newlines as <br>
 obsidian_syntax  = false        # convert Obsidian-flavored markdown
+backlinks        = false        # append a Backlinks section to each chapter
 ```
 
 ---
@@ -248,6 +253,24 @@ Append `+` for an expanded foldable callout or `-` for collapsed:
 ```
 
 Foldable callouts use the native `<details>`/`<summary>` elements and require no JavaScript. A small `<style>` block is injected into pages that contain callouts; override it with your own `additional-css` in `book.toml`.
+
+---
+
+### Backlinks (`backlinks`)
+
+```toml
+[preprocessor.obsidian]
+backlinks = true
+```
+
+Appends a `## Backlinks` section at the bottom of each chapter that is referenced by at least one other chapter. The section contains a list of links back to those chapters, sorted alphabetically.
+
+Both link formats are detected:
+
+- Standard markdown links: `[text](other-page.md)`
+- Wikilinks: `[[Other Page]]` (when `obsidian_syntax` is disabled; otherwise they are already converted to markdown links before this pass runs)
+
+Links inside fenced code blocks are ignored. Excalidraw viewer pages are excluded from both collection and injection. If the same chapter links to a page multiple times, it appears only once in the backlinks list.
 
 ---
 

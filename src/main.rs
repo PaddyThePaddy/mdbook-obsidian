@@ -1,4 +1,5 @@
 mod anchors;
+mod backlinks;
 mod breaks;
 mod excalidraw;
 mod obsidian_syntax;
@@ -217,6 +218,17 @@ impl Preprocessor for ObsidianPreprocessor {
                         obsidian_syntax::process(&chapter.content, verbose);
                 }
             });
+        }
+
+        // --- Pass 6: Backlinks -----------------------------------------------
+        let backlinks_enabled = ctx
+            .config
+            .get::<bool>("preprocessor.obsidian.backlinks")
+            .unwrap_or(None)
+            .unwrap_or(false);
+
+        if backlinks_enabled {
+            backlinks::run_backlinks_pass(&mut book, verbose);
         }
 
         Ok(book)
