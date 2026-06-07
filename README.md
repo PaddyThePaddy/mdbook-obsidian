@@ -18,6 +18,7 @@ An [mdBook](https://rust-lang.github.io/mdBook/) preprocessor that makes Obsidia
   - [Hard line breaks](#hard-line-breaks-hard_line_breaks)
   - [Obsidian-flavored syntax](#obsidian-flavored-syntax-obsidian_syntax)
   - [Backlinks](#backlinks-backlinks)
+  - [Image lightbox](#image-lightbox-lightbox)
 - [Roadmap](#roadmap)
 - [License](#license)
 
@@ -59,6 +60,7 @@ These are disabled by default and enabled per feature flag in `book.toml`.
 | Hard line breaks | `hard_line_breaks` | `false` |
 | Obsidian-flavored syntax | `obsidian_syntax` | `false` |
 | Backlinks | `backlinks` | `false` |
+| Image lightbox | `lightbox` | `false` |
 
 **Automatic TOC generation** — Scans `src/` and adds any markdown file not already listed in `SUMMARY.md` as a navigable chapter. The folder hierarchy is reflected in the sidebar. Subdirectories with an `index.md` or `README.md` become clickable section headers; otherwise the section header is non-clickable.
 
@@ -69,6 +71,8 @@ These are disabled by default and enabled per feature flag in `book.toml`.
 **Obsidian-flavored syntax** — Converts Obsidian-specific markdown to standard HTML:
 
 **Backlinks** — Appends a `## Backlinks` section to each chapter listing every other chapter that links to it. Both standard markdown links (`[text](page.md)`) and wikilinks (`[[Page Name]]`) are detected. Links inside fenced code blocks are ignored.
+
+**Image lightbox** — Clicking or tapping any image opens it in a full-screen overlay. Supports drag-to-pan, scroll-wheel zoom (desktop), pinch-to-zoom (touch), double-tap to reset, and Escape / backdrop click to close. Only injected on pages that actually contain images. Both standard markdown links (`[text](page.md)`) and wikilinks (`[[Page Name]]`) are detected. Links inside fenced code blocks are ignored.
 
 | Syntax | Result |
 |--------|--------|
@@ -116,6 +120,7 @@ insert_heading   = false        # insert # Heading when chapter has none
 hard_line_breaks = false        # treat single newlines as <br>
 obsidian_syntax  = false        # convert Obsidian-flavored markdown
 backlinks        = false        # append a Backlinks section to each chapter
+lightbox         = false        # tap/click images to zoom and pan
 ```
 
 ---
@@ -271,6 +276,29 @@ Both link formats are detected:
 - Wikilinks: `[[Other Page]]` (when `obsidian_syntax` is disabled; otherwise they are already converted to markdown links before this pass runs)
 
 Links inside fenced code blocks are ignored. Excalidraw viewer pages are excluded from both collection and injection. If the same chapter links to a page multiple times, it appears only once in the backlinks list.
+
+---
+
+### Image lightbox (`lightbox`)
+
+```toml
+[preprocessor.obsidian]
+lightbox = true
+```
+
+Adds a full-screen image viewer to any chapter that contains at least one image. No external libraries or extra files are required — the CSS and JavaScript are compiled into the binary and injected only on pages that need them.
+
+**Controls:**
+
+| Action | Behaviour |
+|--------|-----------|
+| Click / tap image | Open lightbox |
+| Drag | Pan while zoomed |
+| Scroll wheel | Zoom in / out (desktop) |
+| Pinch | Zoom in / out (touch) |
+| Double-click / double-tap | Reset zoom and position |
+| Click backdrop or `×` button | Close |
+| Escape | Close |
 
 ---
 

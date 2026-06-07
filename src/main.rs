@@ -2,6 +2,7 @@ mod anchors;
 mod backlinks;
 mod breaks;
 mod excalidraw;
+mod lightbox;
 mod obsidian_syntax;
 mod toc;
 
@@ -229,6 +230,29 @@ impl Preprocessor for ObsidianPreprocessor {
 
         if backlinks_enabled {
             backlinks::run_backlinks_pass(&mut book, verbose);
+        }
+
+        // --- Pass 7: Image lightbox ------------------------------------------
+        let lightbox = ctx
+            .config
+            .get::<bool>("preprocessor.obsidian.lightbox")
+            .unwrap_or(None)
+            .unwrap_or(false);
+
+        if lightbox {
+            book.for_each_mut(|item| {
+                if let BookItem::Chapter(chapter) = item {
+                    let path_str = chapter
+                        .path
+                        .as_ref()
+                        .and_then(|p| p.to_str())
+                        .unwrap_or("");
+                    if path_str.is_empty() || path_str.starts_with("_excalidraw/") {
+                        return;
+                    }
+                    chapter.content = lightbox::process(&chapter.content);
+                }
+            });
         }
 
         Ok(book)
