@@ -116,7 +116,9 @@ fn normalize_link(url: &str) -> String {
 
 fn normalize_fragment(fragment: &str) -> String {
     let decoded = urlencoding::decode(fragment).unwrap_or(std::borrow::Cow::Borrowed(fragment));
-    decoded.to_lowercase().replace(' ', "-")
+    // Strip leading `^` — Obsidian block ID prefix; anchors are generated without it.
+    let s = decoded.trim_start_matches('^');
+    s.to_lowercase().replace(' ', "-")
 }
 
 #[cfg(test)]
@@ -157,6 +159,22 @@ mod tests {
         assert_eq!(
             replace_links(&link_re(), "[top](#top)", false),
             "[top](#top)"
+        );
+    }
+
+    #[test]
+    fn strips_block_id_caret_from_fragment() {
+        assert_eq!(
+            replace_links(&link_re(), "[ref](Note.md#^my-block)", false),
+            "[ref](Note.md#my-block)"
+        );
+    }
+
+    #[test]
+    fn strips_block_id_caret_from_same_page_fragment() {
+        assert_eq!(
+            replace_links(&link_re(), "[ref](#^my-block)", false),
+            "[ref](#my-block)"
         );
     }
 

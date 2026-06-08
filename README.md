@@ -81,6 +81,9 @@ These are disabled by default and enabled per feature flag in `book.toml`.
 | `[[Note Name]]` | `[Note Name](Note%20Name.md)` |
 | `[[Note Name\|Display]]` | `[Display](Note%20Name.md)` |
 | `[[Note Name#Heading]]` | `[Note Name](Note%20Name.md#heading)` |
+| `[[Note Name#^block-id]]` | `[Note Name](Note%20Name.md#block-id)` |
+| `[[#^block-id]]` | `[block-id](#block-id)` |
+| `paragraph text ^my-id` | `paragraph text <span id="my-id"></span>` |
 | `> [!note] Title` | Styled callout block |
 
 ---
@@ -227,6 +230,8 @@ obsidian_syntax = true
 ```
 
 **Comments** (`%%...%%`) are removed, including multi-line spans. Content inside fenced code blocks is never touched.
+
+**Block IDs** — Obsidian's `^block-id` marker at the end of a paragraph, heading, or list item is replaced with `<span id="block-id"></span>` so other pages can link to it. Links to block IDs — `[[Note#^block-id]]` and `[[#^block-id]]` — are converted to `(Note.md#block-id)` and `(#block-id)` respectively; the `^` is stripped and the ID is used verbatim without slugification.
 
 **Highlights** (`==text==`) become `<mark>text</mark>`. Triple-equals (`===`) and inline code spans are left untouched.
 

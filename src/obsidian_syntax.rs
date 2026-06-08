@@ -33,11 +33,13 @@ details.callout-note>summary{background:rgba(74,158,255,.18)}
 
 /// Apply all Obsidian-flavored syntax conversions:
 /// - `%%...%%` comments are removed
+/// - `^block-id` markers become `<span id="block-id">` anchors
 /// - `==text==` becomes `<mark>text</mark>`
 /// - `> [!type]` callout blocks become styled HTML
 /// - `[[wikilinks]]` become regular markdown links
 pub(crate) fn process(content: &str, _verbose: bool) -> String {
     let s = remove_comments(content);
+    let s = convert_block_ids(&s);
     let (s, had_callouts) = convert_callouts(&s);
     let s = convert_highlights(&s);
     let s = convert_wikilinks(&s);
@@ -104,6 +106,102 @@ fn strip_line_comments(line: &str, in_comment: &mut bool) -> String {
         }
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Block IDs: `^id` at line end → `<span id="id"></span>` anchor
+// ---------------------------------------------------------------------------
+
+fn convert_block_ids(content: &str) -> String {
+    let lines: Vec<&str> = content.split('\n').collect();
+    let n = lines.len();
+    let mut result = String::with_capacity(content.len());
+    let mut in_code_block = false;
+    let mut fence: Option<(char, usize)> = None;
+
+    for (li, &line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        let (is_fence, fc, flen) = crate::detect_fence(trimmed);
+
+        if is_fence {
+            if !in_code_block {
+                in_code_block = true;
+                fence = Some((fc, flen));
+            } else if let Some((f, c)) = fence {
+                if fc == f && flen >= c {
+                    in_code_block = false;
+                    fence = None;
+                }
+            }
+            result.push_str(line);
+        } else if in_code_block {
+            result.push_str(line);
+        } else {
+            result.push_str(&convert_block_id_line(line));
+        }
+        if li < n - 1 {
+            result.push('\n');
+        }
+    }
+    result
+}
+
+fn convert_block_id_line(line: &str) -> String {
+    let trimmed = line.trim();
+
+    // Standalone block ID: line contains nothing but `^id` (possibly with whitespace).
+    if let Some(rest) = trimmed.strip_prefix('^') {
+        if !rest.is_empty()
+            && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            return format!("<span id=\"{rest}\"></span>");
+        }
+    }
+
+    // Inline block ID: ` ^id` at the very end of the line.
+    if let Some(pos) = line.rfind(" ^") {
+        let after = &line[pos + 2..];
+        let id_len = after
+            .find(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+            .unwrap_or(after.len());
+        let id = &after[..id_len];
+        let rest_trimmed = after[id_len..].trim();
+        if !id.is_empty() && rest_trimmed.is_empty() {
+            let before = &line[..pos];
+            // Plain paragraph text: wrap the content so the ID sits on the element itself.
+            // Headings/lists/blockquotes: append an empty span to avoid breaking block syntax.
+            if is_plain_paragraph(before) {
+                return format!("<span id=\"{id}\">{before}</span>");
+            } else {
+                return format!("{before} <span id=\"{id}\"></span>");
+            }
+        }
+    }
+
+    line.to_string()
+}
+
+/// Returns true when `s` is plain paragraph content (no markdown block-level prefix).
+/// Headings (`# `), unordered lists (`- `/`* `/`+ `), ordered lists (`1. `),
+/// and blockquotes (`> `) are non-plain — wrapping them in a `<span>` would
+/// prevent pulldown-cmark from recognising the block-level syntax.
+fn is_plain_paragraph(s: &str) -> bool {
+    let t = s.trim_start();
+    if t.starts_with('#') || t.starts_with('>') || t.starts_with(':') {
+        return false;
+    }
+    if t.starts_with("- ") || t.starts_with("* ") || t.starts_with("+ ") {
+        return false;
+    }
+    // Ordered list: one or more digits followed by `. ` or `) `
+    let digits_end = t.find(|c: char| !c.is_ascii_digit()).unwrap_or(0);
+    if digits_end > 0 {
+        let after_digits = &t[digits_end..];
+        if after_digits.starts_with(". ") || after_digits.starts_with(") ") {
+            return false;
+        }
+    }
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -452,17 +550,16 @@ fn wikilink_line(re: &Regex, line: &str) -> String {
         }
 
         // Split on `#` for heading anchor.
-        let (file_part, heading) = if let Some(hash) = path_part.find('#') {
+        let (file_part, frag_raw) = if let Some(hash) = path_part.find('#') {
             (&path_part[..hash], Some(&path_part[hash + 1..]))
         } else {
             (path_part, None)
         };
 
-        // Add .md if no extension present.
-        let file_with_ext = if std::path::Path::new(file_part)
-            .extension()
-            .is_some()
-        {
+        // Add .md if no extension present; empty file_part = same-page link.
+        let file_with_ext = if file_part.is_empty() {
+            String::new()
+        } else if std::path::Path::new(file_part).extension().is_some() {
             file_part.to_string()
         } else {
             format!("{file_part}.md")
@@ -475,18 +572,40 @@ fn wikilink_line(re: &Regex, line: &str) -> String {
             .collect::<Vec<_>>()
             .join("/");
 
-        let url = match heading {
-            Some(h) => format!("{}#{}", encoded, h.to_lowercase().replace(' ', "-")),
-            None => encoded,
+        // Block IDs (`^id`) are kept verbatim; headings are slugified.
+        let fragment = frag_raw.map(|f| {
+            if let Some(block_id) = f.strip_prefix('^') {
+                block_id.to_string()
+            } else {
+                f.to_lowercase().replace(' ', "-")
+            }
+        });
+
+        let url = if let Some(f) = &fragment {
+            format!("{}#{}", encoded, f)
+        } else {
+            encoded
         };
 
-        // Display text: explicit override, or the bare filename without extension.
-        let display = display_override.unwrap_or_else(|| {
-            std::path::Path::new(file_part)
+        // Display text: explicit override, filename stem, or fragment for same-page links.
+        let display: String = if let Some(d) = display_override {
+            d.to_string()
+        } else {
+            let stem = std::path::Path::new(file_part)
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or(file_part)
-        });
+                .to_string();
+            if stem.is_empty() {
+                // Same-page link: use the fragment as display text.
+                frag_raw
+                    .unwrap_or("")
+                    .trim_start_matches('^')
+                    .to_string()
+            } else {
+                stem
+            }
+        };
 
         format!("[{display}]({url})")
     })
@@ -588,6 +707,80 @@ mod tests {
         let input = "> This is a regular blockquote";
         let out = process(input, false);
         assert_eq!(out, input);
+    }
+
+    // --- block IDs ---
+
+    #[test]
+    fn block_id_inline_plain_paragraph() {
+        assert_eq!(
+            process("Some paragraph text ^my-block", false),
+            "<span id=\"my-block\">Some paragraph text</span>"
+        );
+    }
+
+    #[test]
+    fn block_id_standalone_line() {
+        assert_eq!(
+            process("^standalone-id", false),
+            "<span id=\"standalone-id\"></span>"
+        );
+    }
+
+    #[test]
+    fn block_id_in_fenced_code_unchanged() {
+        let input = "```\ncode line ^not-an-id\n```";
+        assert_eq!(process(input, false), input);
+    }
+
+    #[test]
+    fn block_id_not_converted_mid_line() {
+        // `^id` with more text after it → not a block ID
+        let input = "text ^id more text";
+        assert_eq!(process(input, false), input);
+    }
+
+    #[test]
+    fn block_id_heading_appends_empty_span() {
+        // Headings: keep the `##` outside so markdown syntax is preserved.
+        assert_eq!(
+            process("## Section ^sec-id", false),
+            "## Section <span id=\"sec-id\"></span>"
+        );
+    }
+
+    #[test]
+    fn block_id_list_item_appends_empty_span() {
+        assert_eq!(
+            process("- Item text ^item-id", false),
+            "- Item text <span id=\"item-id\"></span>"
+        );
+    }
+
+    // --- wikilinks with block IDs ---
+
+    #[test]
+    fn wikilink_to_block_id() {
+        let out = process("[[My Note#^block-id]]", false);
+        assert_eq!(out, "[My Note](My%20Note.md#block-id)");
+    }
+
+    #[test]
+    fn wikilink_same_page_block_id() {
+        let out = process("[[#^block-id]]", false);
+        assert_eq!(out, "[block-id](#block-id)");
+    }
+
+    #[test]
+    fn wikilink_same_page_block_id_with_display() {
+        let out = process("[[#^block-id|See this]]", false);
+        assert_eq!(out, "[See this](#block-id)");
+    }
+
+    #[test]
+    fn wikilink_cross_note_block_id_with_display() {
+        let out = process("[[My Note#^block-id|See here]]", false);
+        assert_eq!(out, "[See here](My%20Note.md#block-id)");
     }
 
     // --- wikilinks ---
