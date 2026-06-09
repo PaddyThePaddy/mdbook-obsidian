@@ -1,6 +1,7 @@
 mod anchors;
 mod backlinks;
 mod breaks;
+mod embed;
 mod excalidraw;
 mod lightbox;
 mod obsidian_syntax;
@@ -251,6 +252,29 @@ impl Preprocessor for ObsidianPreprocessor {
                         return;
                     }
                     chapter.content = lightbox::process(&chapter.content);
+                }
+            });
+        }
+
+        // --- Pass 8: Embed (YouTube, etc.) ----------------------------------
+        let embed_enabled = ctx
+            .config
+            .get::<bool>("preprocessor.obsidian.embed")
+            .unwrap_or(None)
+            .unwrap_or(false);
+
+        if embed_enabled {
+            book.for_each_mut(|item| {
+                if let BookItem::Chapter(chapter) = item {
+                    let path_str = chapter
+                        .path
+                        .as_ref()
+                        .and_then(|p| p.to_str())
+                        .unwrap_or("");
+                    if path_str.is_empty() || path_str.starts_with("_excalidraw/") {
+                        return;
+                    }
+                    chapter.content = embed::process(&chapter.content);
                 }
             });
         }

@@ -19,6 +19,7 @@ An [mdBook](https://rust-lang.github.io/mdBook/) preprocessor that makes Obsidia
   - [Obsidian-flavored syntax](#obsidian-flavored-syntax-obsidian_syntax)
   - [Backlinks](#backlinks-backlinks)
   - [Image lightbox](#image-lightbox-lightbox)
+  - [Media embeds](#media-embeds-embed)
 - [Roadmap](#roadmap)
 - [License](#license)
 
@@ -34,6 +35,8 @@ These run automatically with no configuration required.
 |--------|-------|
 | `[Section](#Grade%201%20-%20Color)` | `[Section](#grade-1---color)` |
 | `[Link](Note.md#Grade%201)` | `[Link](Note.md#grade-1)` |
+
+Bare URLs (`https://...`) anywhere in the text are also converted to clickable links automatically; trailing punctuation (`.`, `,`, etc.) is stripped before linking.
 
 Image links, external URLs, links inside fenced code blocks, and inline code spans are left untouched — only `#fragment` portions are normalized.
 
@@ -61,6 +64,7 @@ These are disabled by default and enabled per feature flag in `book.toml`.
 | Obsidian-flavored syntax | `obsidian_syntax` | `false` |
 | Backlinks | `backlinks` | `false` |
 | Image lightbox | `lightbox` | `false` |
+| Media embeds | `embed` | `false` |
 
 **Automatic TOC generation** — Scans `src/` and adds any markdown file not already listed in `SUMMARY.md` as a navigable chapter. The folder hierarchy is reflected in the sidebar. Subdirectories with an `index.md` or `README.md` become clickable section headers; otherwise the section header is non-clickable.
 
@@ -124,6 +128,7 @@ hard_line_breaks = false        # treat single newlines as <br>
 obsidian_syntax  = false        # convert Obsidian-flavored markdown
 backlinks        = false        # append a Backlinks section to each chapter
 lightbox         = false        # tap/click images to zoom and pan
+embed            = false        # embed YouTube videos in place of bare URLs
 ```
 
 ---
@@ -304,6 +309,26 @@ Adds a full-screen image viewer to any chapter that contains at least one image.
 | Double-click / double-tap | Reset zoom and position |
 | Click backdrop or `×` button | Close |
 | Escape | Close |
+
+### Media embeds (`embed`)
+
+```toml
+[preprocessor.obsidian]
+embed = true
+```
+
+When a line contains only a YouTube URL — either bare (`https://youtu.be/VIDEO_ID`) or as a markdown link (`[text](https://youtu.be/VIDEO_ID)`) — the URL is replaced with a responsive embedded video player. The player is 16:9 and scales to the full column width.
+
+Supported URL formats:
+
+| URL format | Example |
+|------------|---------|
+| Short URL | `https://youtu.be/dQw4w9WgXcQ` |
+| Standard URL | `https://www.youtube.com/watch?v=dQw4w9WgXcQ` |
+
+Lines that contain other text in addition to the YouTube URL are not embedded (only standalone URL lines are converted). URLs inside fenced code blocks are skipped.
+
+The embed CSS is injected only on pages that contain at least one embedded video. No external libraries or extra files are required.
 
 ---
 

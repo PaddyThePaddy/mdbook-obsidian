@@ -1,6 +1,7 @@
 use regex::Regex;
 
 pub(crate) fn process_content(re: &Regex, content: &str, verbose: bool) -> String {
+    let url_re = Regex::new(r#"https?://[^\s\[\]<>"']+"#).expect("valid regex");
     let trailing_newline = content.ends_with('\n');
     let mut result = String::with_capacity(content.len());
     let mut in_code_block = false;
@@ -30,7 +31,7 @@ pub(crate) fn process_content(re: &Regex, content: &str, verbose: bool) -> Strin
         } else if in_code_block {
             result.push_str(line);
         } else {
-            result.push_str(&transform_line(re, line, verbose));
+            result.push_str(&transform_line(re, &url_re, line, verbose));
         }
     }
 
@@ -40,18 +41,18 @@ pub(crate) fn process_content(re: &Regex, content: &str, verbose: bool) -> Strin
     result
 }
 
-fn transform_line(re: &Regex, line: &str, verbose: bool) -> String {
+fn transform_line(link_re: &Regex, url_re: &Regex, line: &str, verbose: bool) -> String {
     let mut result = String::new();
     let mut remaining = line;
 
     while !remaining.is_empty() {
         match remaining.find('`') {
             None => {
-                result.push_str(&replace_links(re, remaining, verbose));
+                result.push_str(&process_text(link_re, url_re, remaining, verbose));
                 break;
             }
             Some(pos) => {
-                result.push_str(&replace_links(re, &remaining[..pos], verbose));
+                result.push_str(&process_text(link_re, url_re, &remaining[..pos], verbose));
                 remaining = &remaining[pos..];
 
                 let tick_count = remaining.chars().take_while(|&c| c == '`').count();
@@ -65,7 +66,7 @@ fn transform_line(re: &Regex, line: &str, verbose: bool) -> String {
                         remaining = &remaining[span_end..];
                     }
                     None => {
-                        result.push_str(&replace_links(re, remaining, verbose));
+                        result.push_str(&process_text(link_re, url_re, remaining, verbose));
                         break;
                     }
                 }
@@ -76,23 +77,54 @@ fn transform_line(re: &Regex, line: &str, verbose: bool) -> String {
     result
 }
 
-fn replace_links(re: &Regex, text: &str, verbose: bool) -> String {
-    re.replace_all(text, |caps: &regex::Captures| {
-        let bang = &caps[1];
-        let link_text = &caps[2];
-        let url = &caps[3];
+/// Normalize existing markdown links and auto-link bare URLs in a plain-text
+/// segment (one that contains no inline code spans).
+fn process_text(link_re: &Regex, url_re: &Regex, text: &str, verbose: bool) -> String {
+    let mut result = String::new();
+    let mut last_end = 0;
+
+    for caps in link_re.captures_iter(text) {
+        let mat = caps.get(0).unwrap();
+
+        // Auto-link bare URLs in the gap before this markdown link.
+        result.push_str(&autolink_gap(url_re, &text[last_end..mat.start()]));
+
+        // Normalize the markdown link itself.
+        let bang = caps.get(1).map_or("", |m| m.as_str());
+        let link_text = caps.get(2).map_or("", |m| m.as_str());
+        let url = caps.get(3).map_or("", |m| m.as_str());
 
         if bang == "!" {
-            return format!("![{}]({})", link_text, url);
+            result.push_str(mat.as_str());
+        } else {
+            let new_url = normalize_link(url);
+            if verbose && new_url != url {
+                eprintln!(" INFO [mdbook-obsidian]: link: {url}  =>  {new_url}");
+            }
+            result.push_str(&format!("[{link_text}]({new_url})"));
         }
 
-        let new_url = normalize_link(url);
-        if verbose && new_url != url[..] {
-            eprintln!(" INFO [mdbook-obsidian]: link: {url}  =>  {new_url}");
-        }
-        format!("[{}]({})", link_text, new_url)
-    })
-    .into_owned()
+        last_end = mat.end();
+    }
+
+    // Auto-link bare URLs in the trailing gap after the last markdown link.
+    result.push_str(&autolink_gap(url_re, &text[last_end..]));
+    result
+}
+
+fn autolink_gap(url_re: &Regex, text: &str) -> String {
+    url_re
+        .replace_all(text, |caps: &regex::Captures| {
+            let raw = caps.get(0).unwrap().as_str();
+            let url = strip_url_trailing_punct(raw);
+            let trailing = &raw[url.len()..];
+            format!("[{url}]({url}){trailing}")
+        })
+        .into_owned()
+}
+
+fn strip_url_trailing_punct(url: &str) -> &str {
+    url.trim_end_matches(|c: char| ".,;:!?\"'".contains(c))
 }
 
 fn normalize_link(url: &str) -> String {
@@ -127,6 +159,16 @@ mod tests {
 
     fn link_re() -> Regex {
         Regex::new(r"(!?)\[([^\]]*)\]\(([^)]+)\)").unwrap()
+    }
+
+    fn url_re() -> Regex {
+        Regex::new(r#"https?://[^\s\[\]<>"']+"#).unwrap()
+    }
+
+    // Thin wrapper so existing tests keep their original call shape.
+    // Auto-linking has no effect on inputs that contain no bare HTTP URLs.
+    fn replace_links(re: &Regex, text: &str, verbose: bool) -> String {
+        process_text(re, &url_re(), text, verbose)
     }
 
     // --- image links: never transformed ---
@@ -210,15 +252,61 @@ mod tests {
     #[test]
     fn skips_inline_code() {
         let input = "text `[Link](#Grade%201)` end";
-        assert_eq!(transform_line(&link_re(), input, false), input);
+        assert_eq!(transform_line(&link_re(), &url_re(), input, false), input);
     }
 
     #[test]
     fn transforms_outside_inline_code() {
         let input = "[A](#Grade%201) and `code` and [B](#Math%20Class)";
         assert_eq!(
-            transform_line(&link_re(), input, false),
+            transform_line(&link_re(), &url_re(), input, false),
             "[A](#grade-1) and `code` and [B](#math-class)"
         );
+    }
+
+    // --- auto-link bare URLs ---
+
+    #[test]
+    fn autolinks_bare_https_url() {
+        let input = "Watch https://youtu.be/abc here.";
+        assert_eq!(
+            process_text(&link_re(), &url_re(), input, false),
+            "Watch [https://youtu.be/abc](https://youtu.be/abc) here."
+        );
+    }
+
+    #[test]
+    fn autolinks_strips_trailing_period() {
+        let input = "See https://example.com.";
+        assert_eq!(
+            process_text(&link_re(), &url_re(), input, false),
+            "See [https://example.com](https://example.com)."
+        );
+    }
+
+    #[test]
+    fn autolink_does_not_double_link_existing_link() {
+        let input = "[text](https://youtu.be/abc)";
+        assert_eq!(
+            process_text(&link_re(), &url_re(), input, false),
+            "[text](https://youtu.be/abc)"
+        );
+    }
+
+    #[test]
+    fn autolink_skips_url_in_link_text() {
+        // URL appears in link text portion — should not be separately auto-linked
+        // because the whole `[...](...)` is matched as a single link.
+        let input = "[https://youtu.be/abc](https://youtu.be/abc)";
+        assert_eq!(
+            process_text(&link_re(), &url_re(), input, false),
+            "[https://youtu.be/abc](https://youtu.be/abc)"
+        );
+    }
+
+    #[test]
+    fn autolinks_bare_url_in_code_block_skipped() {
+        let input = "```\nhttps://example.com\n```";
+        assert_eq!(process_content(&link_re(), input, false), input);
     }
 }
