@@ -491,8 +491,14 @@ fn render_callout(
 //            ![[...]] embeds and [[*.excalidraw]] are left unchanged.
 // ---------------------------------------------------------------------------
 
+fn wikilink_re() -> &'static Regex {
+    use std::sync::OnceLock;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(!?)\[\[([^\]]+?)\]\]").unwrap())
+}
+
 fn convert_wikilinks(content: &str) -> String {
-    let re = Regex::new(r"(!?)\[\[([^\]]+?)\]\]").expect("valid regex");
+    let re = wikilink_re();
 
     let lines: Vec<&str> = content.split('\n').collect();
     let n = lines.len();

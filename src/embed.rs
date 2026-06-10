@@ -6,12 +6,18 @@ const EMBED_CSS: &str = "<style>
 </style>
 ";
 
+fn link_re() -> &'static Regex {
+    use std::sync::OnceLock;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(!?)\[([^\]]*)\]\(([^)]+)\)").unwrap())
+}
+
 pub(crate) fn process(content: &str) -> String {
     if !has_youtube(content) {
         return content.to_string();
     }
 
-    let link_re = Regex::new(r"(!?)\[([^\]]*)\]\(([^)]+)\)").expect("valid regex");
+    let link_re = link_re();
 
     let lines: Vec<&str> = content.split('\n').collect();
     let n = lines.len();

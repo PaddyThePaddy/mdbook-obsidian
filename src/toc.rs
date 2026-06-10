@@ -87,8 +87,9 @@ pub(crate) fn run_toc_pass(ctx: &PreprocessorContext, book: &mut Book, verbose: 
         .unwrap_or(0)
         + 1;
 
+    let file_refs: Vec<&PathBuf> = files.iter().collect();
     let new_items =
-        build_items(&files, &src_dir, Path::new(""), &[], &[], start_num, sort, dirs_first);
+        build_items(&file_refs, &src_dir, Path::new(""), &[], &[], start_num, sort, dirs_first);
     if new_items.is_empty() {
         return;
     }
@@ -122,15 +123,19 @@ pub(crate) fn run_toc_pass(ctx: &PreprocessorContext, book: &mut Book, verbose: 
 /// Collect source_paths of all chapters already in the book (recursive).
 fn covered_paths(items: &[BookItem]) -> HashSet<PathBuf> {
     let mut covered = HashSet::new();
+    collect_covered(items, &mut covered);
+    covered
+}
+
+fn collect_covered(items: &[BookItem], covered: &mut HashSet<PathBuf>) {
     for item in items {
         if let BookItem::Chapter(ch) = item {
             if let Some(sp) = &ch.source_path {
                 covered.insert(sp.clone());
             }
-            covered.extend(covered_paths(&ch.sub_items));
+            collect_covered(&ch.sub_items, covered);
         }
     }
-    covered
 }
 
 /// Walk `src_dir` respecting `.gitignore` (and optional extra ignore file).
@@ -189,7 +194,7 @@ fn scan_files(
 /// the third top-level group). `start_idx` is the 1-based index for the first
 /// item at the current depth; siblings increment it sequentially.
 fn build_items(
-    files: &[PathBuf],
+    files: &[&PathBuf],
     src_dir: &Path,
     prefix: &Path,
     parent_names: &[String],
@@ -205,7 +210,7 @@ fn build_items(
     let mut subdir_order: Vec<String> = Vec::new();
     let mut subdir_map: HashMap<String, Vec<&PathBuf>> = HashMap::new();
 
-    for file in files {
+    for file in files.iter().copied() {
         let Ok(rel) = file.strip_prefix(prefix) else {
             continue;
         };
@@ -325,10 +330,10 @@ fn build_items(
                         (String::new(), None, None)
                     };
 
-                let children: Vec<PathBuf> = dir_files
+                let children: Vec<&PathBuf> = dir_files
                     .iter()
-                    .filter(|f| **f != &index_rel && **f != &readme_rel)
-                    .map(|f| (*f).clone())
+                    .copied()
+                    .filter(|f| *f != &index_rel && *f != &readme_rel)
                     .collect();
 
                 let mut my_num = number_prefix.to_vec();
@@ -366,13 +371,19 @@ fn build_items(
     items
 }
 
+fn summary_link_re() -> &'static Regex {
+    use std::sync::OnceLock;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\]\(([^)]+\.md)\)").unwrap())
+}
+
 /// Find where to insert new chapters in `book.items` by locating the placeholder
 /// in `SUMMARY.md` and counting which existing chapters precede it.
 fn placeholder_index(summary_content: &str, items: &[BookItem]) -> Option<usize> {
     let placeholder_pos = summary_content.find(TOC_PLACEHOLDER)?;
     let before = &summary_content[..placeholder_pos];
 
-    let link_re = Regex::new(r"\]\(([^)]+\.md)\)").expect("valid regex");
+    let link_re = summary_link_re();
     let paths_before: HashSet<PathBuf> = link_re
         .captures_iter(before)
         .map(|c| PathBuf::from(urlencoding::decode(c[1].trim()).unwrap_or_default().as_ref()))

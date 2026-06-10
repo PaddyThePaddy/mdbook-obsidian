@@ -56,95 +56,104 @@ impl Preprocessor for ObsidianPreprocessor {
         });
 
         // --- Pass 2: Excalidraw link detection and rewrite ---------------
-        let excalidraw_link_re =
-            Regex::new(r"(!?)\[([^\]]*)\]\(([^)]*\.excalidraw(?:\.md)?)\)").expect("valid regex");
-        let excalidraw_wiki_re =
-            Regex::new(r"(!?)\[\[([^\]]+\.excalidraw)(?:\|([^\]]*))?\]\]").expect("valid regex");
+        let excalidraw_enabled = ctx
+            .config
+            .get::<bool>("preprocessor.obsidian.excalidraw")
+            .unwrap_or(None)
+            .unwrap_or(false);
 
         let src_dir = ctx.root.join(&ctx.config.book.src);
-        let mut all_refs: Vec<ExcalidrawRef> = Vec::new();
-        // Slugs of chapters that ARE excalidraw files (listed directly in SUMMARY.md or
-        // discovered by the TOC pass). We convert them in-place; the injection loop below
-        // skips their slugs to avoid creating a duplicate chapter.
-        let mut summary_slugs: HashSet<String> = HashSet::new();
 
-        book.for_each_mut(|item| {
-            if let BookItem::Chapter(chapter) = item {
-                let is_excalidraw_source = chapter
-                    .source_path
-                    .as_ref()
-                    .and_then(|p| p.to_str())
-                    .map(|s| s.ends_with(".excalidraw.md") || s.ends_with(".excalidraw"))
-                    .unwrap_or(false);
+        if excalidraw_enabled {
+            let excalidraw_link_re =
+                Regex::new(r"(!?)\[([^\]]*)\]\(([^)]*\.excalidraw(?:\.md)?)\)").expect("valid regex");
+            let excalidraw_wiki_re =
+                Regex::new(r"(!?)\[\[([^\]]+\.excalidraw)(?:\|([^\]]*))?\]\]").expect("valid regex");
 
-                if is_excalidraw_source {
-                    // Convert the chapter in-place to the viewer page.
-                    let source = chapter.source_path.as_ref().unwrap();
-                    let file_path = src_dir.join(source);
+            let mut all_refs: Vec<ExcalidrawRef> = Vec::new();
+            // Slugs of chapters that ARE excalidraw files (listed directly in SUMMARY.md or
+            // discovered by the TOC pass). We convert them in-place; the injection loop below
+            // skips their slugs to avoid creating a duplicate chapter.
+            let mut summary_slugs: HashSet<String> = HashSet::new();
 
-                    let stem_raw = source
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("drawing");
-                    let name =
-                        stem_raw.strip_suffix(".excalidraw").unwrap_or(stem_raw).to_string();
-                    let slug = excalidraw_slug(&name);
-
-                    let r = ExcalidrawRef { file_path: file_path.clone(), slug: slug.clone(), name };
-
-                    chapter.content = match read_excalidraw_json(&file_path) {
-                        Ok(json) => make_excalidraw_chapter(&r, &json).content,
-                        Err(msg) => {
-                            if verbose {
-                                eprintln!(" WARN [mdbook-obsidian]: {}: {msg}", file_path.display());
-                            }
-                            make_excalidraw_error_chapter(&r, &msg).content
-                        }
-                    };
-                    chapter.path = Some(PathBuf::from(format!("_excalidraw/{}.md", slug)));
-                    summary_slugs.insert(slug);
-                } else {
-                    let chapter_dir = chapter
+            book.for_each_mut(|item| {
+                if let BookItem::Chapter(chapter) = item {
+                    let is_excalidraw_source = chapter
                         .source_path
                         .as_ref()
-                        .and_then(|p| p.parent())
-                        .map(|p| src_dir.join(p))
-                        .unwrap_or_else(|| src_dir.clone());
-                    let depth = chapter
-                        .path
-                        .as_ref()
-                        .map(|p| p.components().count().saturating_sub(1))
-                        .unwrap_or(0);
+                        .and_then(|p| p.to_str())
+                        .map(|s| s.ends_with(".excalidraw.md") || s.ends_with(".excalidraw"))
+                        .unwrap_or(false);
 
-                    chapter.content = process_excalidraw(
-                        &excalidraw_link_re,
-                        &excalidraw_wiki_re,
-                        &chapter.content,
-                        &chapter_dir,
-                        depth,
-                        verbose,
-                        &mut all_refs,
-                    );
-                }
-            }
-        });
+                    if is_excalidraw_source {
+                        // Convert the chapter in-place to the viewer page.
+                        let source = chapter.source_path.as_ref().unwrap();
+                        let file_path = src_dir.join(source);
 
-        // Inject one synthetic chapter per unique excalidraw slug not already handled above.
-        let mut seen = summary_slugs;
-        for r in &all_refs {
-            if !seen.insert(r.slug.clone()) {
-                continue;
-            }
-            let chapter = match read_excalidraw_json(&r.file_path) {
-                Ok(json) => make_excalidraw_chapter(r, &json),
-                Err(msg) => {
-                    if verbose {
-                        eprintln!(" WARN [mdbook-obsidian]: {}: {msg}", r.file_path.display());
+                        let stem_raw = source
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("drawing");
+                        let name =
+                            stem_raw.strip_suffix(".excalidraw").unwrap_or(stem_raw).to_string();
+                        let slug = excalidraw_slug(&name);
+
+                        let r = ExcalidrawRef { file_path: file_path.clone(), slug: slug.clone(), name };
+
+                        chapter.content = match read_excalidraw_json(&file_path) {
+                            Ok(json) => make_excalidraw_chapter(&r, &json).content,
+                            Err(msg) => {
+                                if verbose {
+                                    eprintln!(" WARN [mdbook-obsidian]: {}: {msg}", file_path.display());
+                                }
+                                make_excalidraw_error_chapter(&r, &msg).content
+                            }
+                        };
+                        chapter.path = Some(PathBuf::from(format!("_excalidraw/{}.md", slug)));
+                        summary_slugs.insert(slug);
+                    } else {
+                        let chapter_dir = chapter
+                            .source_path
+                            .as_ref()
+                            .and_then(|p| p.parent())
+                            .map(|p| src_dir.join(p))
+                            .unwrap_or_else(|| src_dir.clone());
+                        let depth = chapter
+                            .path
+                            .as_ref()
+                            .map(|p| p.components().count().saturating_sub(1))
+                            .unwrap_or(0);
+
+                        chapter.content = process_excalidraw(
+                            &excalidraw_link_re,
+                            &excalidraw_wiki_re,
+                            &chapter.content,
+                            &chapter_dir,
+                            depth,
+                            verbose,
+                            &mut all_refs,
+                        );
                     }
-                    make_excalidraw_error_chapter(r, &msg)
                 }
-            };
-            book.items.push(BookItem::Chapter(chapter));
+            });
+
+            // Inject one synthetic chapter per unique excalidraw slug not already handled above.
+            let mut seen = summary_slugs;
+            for r in &all_refs {
+                if !seen.insert(r.slug.clone()) {
+                    continue;
+                }
+                let chapter = match read_excalidraw_json(&r.file_path) {
+                    Ok(json) => make_excalidraw_chapter(r, &json),
+                    Err(msg) => {
+                        if verbose {
+                            eprintln!(" WARN [mdbook-obsidian]: {}: {msg}", r.file_path.display());
+                        }
+                        make_excalidraw_error_chapter(r, &msg)
+                    }
+                };
+                book.items.push(BookItem::Chapter(chapter));
+            }
         }
 
         // --- Pass 3: hard line breaks ------------------------------------

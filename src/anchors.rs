@@ -1,7 +1,13 @@
 use regex::Regex;
 
+fn url_re() -> &'static Regex {
+    use std::sync::OnceLock;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"https?://[^\s\[\]<>"']+"#).unwrap())
+}
+
 pub(crate) fn process_content(re: &Regex, content: &str, verbose: bool) -> String {
-    let url_re = Regex::new(r#"https?://[^\s\[\]<>"']+"#).expect("valid regex");
+    let url_re = url_re();
     let trailing_newline = content.ends_with('\n');
     let mut result = String::with_capacity(content.len());
     let mut in_code_block = false;

@@ -20,6 +20,7 @@ An [mdBook](https://rust-lang.github.io/mdBook/) preprocessor that makes Obsidia
   - [Backlinks](#backlinks-backlinks)
   - [Image lightbox](#image-lightbox-lightbox)
   - [Media embeds](#media-embeds-embed)
+  - [Excalidraw viewer](#excalidraw-viewer-excalidraw)
 - [Roadmap](#roadmap)
 - [License](#license)
 
@@ -40,16 +41,6 @@ Bare URLs (`https://...`) anywhere in the text are also converted to clickable l
 
 Image links, external URLs, links inside fenced code blocks, and inline code spans are left untouched — only `#fragment` portions are normalized.
 
-**Excalidraw viewer pages** — Links and wikilinks pointing to `.excalidraw` files are automatically converted into navigable viewer pages. The viewer HTML is compiled into the binary; no extra files are needed.
-
-| Markdown source | Result |
-|---|---|
-| `![[My Drawing.excalidraw]]` | Link to viewer page |
-| `[[My Drawing.excalidraw\|See diagram]]` | Link with custom text |
-| `[diagram](My%20Drawing.excalidraw)` | Link to viewer page |
-
-The viewer loads React and Excalidraw from a CDN, renders the drawing in read-only mode, and inherits mdBook's active light/dark theme. The published book must be reachable from the internet for the browser to fetch the CDN scripts.
-
 ---
 
 ### Optional
@@ -65,6 +56,7 @@ These are disabled by default and enabled per feature flag in `book.toml`.
 | Backlinks | `backlinks` | `false` |
 | Image lightbox | `lightbox` | `false` |
 | Media embeds | `embed` | `false` |
+| Excalidraw viewer | `excalidraw` | `false` |
 
 **Automatic TOC generation** — Scans `src/` and adds any markdown file not already listed in `SUMMARY.md` as a navigable chapter. The folder hierarchy is reflected in the sidebar. Subdirectories with an `index.md` or `README.md` become clickable section headers; otherwise the section header is non-clickable.
 
@@ -129,6 +121,7 @@ obsidian_syntax  = false        # convert Obsidian-flavored markdown
 backlinks        = false        # append a Backlinks section to each chapter
 lightbox         = false        # tap/click images to zoom and pan
 embed            = false        # embed YouTube videos in place of bare URLs
+excalidraw       = false        # convert .excalidraw links to viewer pages
 ```
 
 ---
@@ -329,6 +322,27 @@ Supported URL formats:
 Lines that contain other text in addition to the YouTube URL are not embedded (only standalone URL lines are converted). URLs inside fenced code blocks are skipped.
 
 The embed CSS is injected only on pages that contain at least one embedded video. No external libraries or extra files are required.
+
+---
+
+### Excalidraw viewer (`excalidraw`)
+
+```toml
+[preprocessor.obsidian]
+excalidraw = true
+```
+
+Disabled by default. When enabled, links and wikilinks pointing to `.excalidraw` files are converted into navigable viewer pages and synthetic chapters are injected into the book.
+
+| Markdown source | Result |
+|---|---|
+| `![[My Drawing.excalidraw]]` | Link to viewer page |
+| `[[My Drawing.excalidraw\|See diagram]]` | Link with custom text |
+| `[diagram](My%20Drawing.excalidraw)` | Link to viewer page |
+
+The viewer loads React and Excalidraw from a CDN, renders the drawing in read-only mode, and inherits mdBook's active light/dark theme. The published book must be reachable from the internet for the browser to fetch the CDN scripts. The viewer HTML is compiled into the binary; no extra files are needed.
+
+Skipping this pass reduces memory usage and build time on low-resource hosts when Excalidraw drawings are not needed.
 
 ---
 
