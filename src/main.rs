@@ -100,7 +100,7 @@ impl Preprocessor for ObsidianPreprocessor {
 
                         let r = ExcalidrawRef { file_path: file_path.clone(), slug: slug.clone(), name };
 
-                        chapter.content = match read_excalidraw_json(&file_path) {
+                        chapter.content = match read_excalidraw_json(&file_path, &src_dir) {
                             Ok(json) => make_excalidraw_chapter(&r, &json).content,
                             Err(msg) => {
                                 if verbose {
@@ -143,7 +143,7 @@ impl Preprocessor for ObsidianPreprocessor {
                 if !seen.insert(r.slug.clone()) {
                     continue;
                 }
-                let chapter = match read_excalidraw_json(&r.file_path) {
+                let chapter = match read_excalidraw_json(&r.file_path, &src_dir) {
                     Ok(json) => make_excalidraw_chapter(r, &json),
                     Err(msg) => {
                         if verbose {

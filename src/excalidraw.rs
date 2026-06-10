@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+use std::fmt::Write as FmtWrite;
 use std::path::{Path, PathBuf};
 
 use mdbook_preprocessor::book::Chapter;
@@ -32,11 +34,23 @@ pub(crate) fn excalidraw_href(slug: &str, depth: usize) -> String {
 
 /// Build a synthetic chapter that renders the Excalidraw scene.
 pub(crate) fn make_excalidraw_chapter(r: &ExcalidrawRef, json: &str) -> Chapter {
-    // Prevent </script> inside JSON from closing the surrounding script tag.
-    let safe_json = json.replace("</", "<\\/");
-    let html = EXCALIDRAW_TEMPLATE
-        .replace("{{DRAWING_NAME}}", &r.name)
-        .replace("{{SCENE_JSON}}", &safe_json);
+    // Split template once so we can stream-write without an intermediate copy.
+    let (tmpl_before, tmpl_after) = EXCALIDRAW_TEMPLATE
+        .split_once("{{SCENE_JSON}}")
+        .expect("template missing {{SCENE_JSON}}");
+
+    let mut html =
+        String::with_capacity(tmpl_before.len() + json.len() + tmpl_after.len() + 10);
+    html.push_str(tmpl_before);
+    // Write JSON with `</` → `<\/` escaping inline — avoids a full intermediate copy.
+    let mut rest = json;
+    while let Some(pos) = rest.find("</") {
+        html.push_str(&rest[..pos]);
+        html.push_str("<\\/");
+        rest = &rest[pos + 2..];
+    }
+    html.push_str(rest);
+    html.push_str(tmpl_after);
 
     Chapter {
         name: r.name.clone(),
@@ -99,53 +113,145 @@ fn parse_embedded_files(content: &str) -> Vec<(String, String)> {
     result
 }
 
-/// Inject embedded image files into the Excalidraw JSON's `files` object.
-/// `file_path` is the path of the `.excalidraw.md` file; image paths in
-/// `embedded` are resolved relative to its parent directory.
+/// Inject embedded image files into the Excalidraw JSON's `files` object using
+/// string manipulation — avoids deserialising the full JSON into a Value tree
+/// (which can use 5–10× the raw byte size for complex drawings).
+///
+/// Images are referenced by relative URL rather than base64-encoded data URIs.
+/// Excalidraw passes `files[id].dataURL` directly to `img.src`, so any valid
+/// URL (including relative paths) is accepted by the browser at render time.
 fn inject_embedded_files(
     json: &str,
     file_path: &Path,
+    src_dir: &Path,
     embedded: &[(String, String)],
 ) -> String {
     if embedded.is_empty() {
         return json.to_string();
     }
-    let mut scene: serde_json::Value = match serde_json::from_str(json) {
-        Ok(v) => v,
-        Err(_) => return json.to_string(),
-    };
     let dir = file_path.parent().unwrap_or(Path::new("."));
-    let files_map = match scene.get_mut("files").and_then(|f| f.as_object_mut()) {
-        Some(m) => m,
-        None => return json.to_string(),
-    };
+
+    // Build the new entries as a JSON fragment: `"id":{...},"id2":{...}`
+    let mut new_entries = String::new();
     for (id, rel_path) in embedded {
-        if files_map.contains_key(id) {
-            continue; // already has inline data
+        // Check whether the ID is already a *key* in the files object.
+        // Using `"id":` avoids false-positives from `"fileId":"id"` values
+        // that appear in every image element inside the elements array.
+        if json.contains(&format!("\"{}\":", id)) {
+            continue;
         }
-        let img_path = dir.join(rel_path);
-        if let Ok(data) = std::fs::read(&img_path) {
-            use base64::Engine as _;
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-            let mime = match img_path.extension().and_then(|e| e.to_str()) {
-                Some("jpg") | Some("jpeg") => "image/jpeg",
-                Some("gif") => "image/gif",
-                Some("svg") => "image/svg+xml",
-                Some("webp") => "image/webp",
-                _ => "image/png",
-            };
-            files_map.insert(
-                id.clone(),
-                serde_json::json!({
-                    "mimeType": mime,
-                    "id": id,
-                    "dataURL": format!("data:{mime};base64,{b64}"),
-                    "created": 0
-                }),
-            );
+        // Try path relative to the excalidraw file first, then vault-root
+        // relative (how Obsidian stores embedded file paths in the section).
+        let img_abs = {
+            let from_dir = dir.join(rel_path);
+            if from_dir.exists() { from_dir } else { src_dir.join(rel_path) }
+        };
+        if !img_abs.exists() {
+            continue;
+        }
+        // Excalidraw viewer pages live one level deep (_excalidraw/<slug>.html).
+        // Prefix the src-relative image path with "../" to reach the output root.
+        // mdBook copies all non-markdown source files to the same relative path
+        // in the output, so this URL resolves correctly at serve time.
+        let img_src_rel = img_abs
+            .strip_prefix(src_dir)
+            .unwrap_or(Path::new(rel_path));
+        let url = format!("../{}", img_src_rel.to_string_lossy().replace('\\', "/"));
+        let mime = match img_abs.extension().and_then(|e| e.to_str()) {
+            Some("jpg") | Some("jpeg") => "image/jpeg",
+            Some("gif") => "image/gif",
+            Some("svg") => "image/svg+xml",
+            Some("webp") => "image/webp",
+            _ => "image/png",
+        };
+        if !new_entries.is_empty() {
+            new_entries.push(',');
+        }
+        // IDs and MIME types are safe without escaping; URLs use only
+        // ASCII path characters from the source filesystem.
+        write!(
+            new_entries,
+            r#""{id}":{{"mimeType":"{mime}","id":"{id}","dataURL":"{url}","created":0}}"#
+        )
+        .unwrap();
+    }
+
+    if new_entries.is_empty() {
+        return json.to_string();
+    }
+
+    inject_into_files_object(json, &new_entries).unwrap_or_else(|| json.to_string())
+}
+
+/// Insert `new_entries` (JSON key:value pairs without surrounding braces) into
+/// the `"files"` object already present in `json`, without a full JSON parse.
+fn inject_into_files_object(json: &str, new_entries: &str) -> Option<String> {
+    // Locate the "files" key.
+    let key_pos = json.find("\"files\"")?;
+    let after_key = &json[key_pos + 7..]; // skip past `"files"`
+
+    // Find the `:` separator.
+    let colon_offset = after_key.find(':')?;
+    let after_colon = &after_key[colon_offset + 1..];
+
+    // Skip optional whitespace and verify the value is an object.
+    let ws = after_colon.len()
+        - after_colon
+            .trim_start_matches(|c: char| c.is_ascii_whitespace())
+            .len();
+    let open_abs = key_pos + 7 + colon_offset + 1 + ws;
+    if json.as_bytes().get(open_abs) != Some(&b'{') {
+        return None; // value is not an object — bail out
+    }
+
+    // Find the matching closing `}`.
+    let close_rel = find_matching_close_brace(&json[open_abs..])?;
+    let close_abs = open_abs + close_rel;
+
+    let inner = json[open_abs + 1..close_abs].trim();
+
+    let mut result = String::with_capacity(json.len() + new_entries.len() + 2);
+    result.push_str(&json[..close_abs]);
+    if !inner.is_empty() {
+        result.push(',');
+    }
+    result.push_str(new_entries);
+    result.push_str(&json[close_abs..]);
+    Some(result)
+}
+
+/// Return the byte index of the `}` that closes the `{` at position 0 of `s`.
+/// Correctly skips over string literals (including escaped characters).
+fn find_matching_close_brace(s: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, b) in s.bytes().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if in_string {
+            match b {
+                b'\\' => escaped = true,
+                b'"' => in_string = false,
+                _ => {}
+            }
+        } else {
+            match b {
+                b'"' => in_string = true,
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            }
         }
     }
-    serde_json::to_string(&scene).unwrap_or_else(|_| json.to_string())
+    None
 }
 
 /// Read the Excalidraw JSON from disk, returning `Err` with a human-readable
@@ -155,7 +261,7 @@ fn inject_embedded_files(
 ///   - `name.excalidraw`    — the whole file is a raw JSON object
 ///   - `name.excalidraw.md` — JSON is inside a ` ```json … ``` ` block
 /// Falls back to the `.md` variant automatically when the plain path isn't found.
-pub(crate) fn read_excalidraw_json(file_path: &Path) -> Result<String, String> {
+pub(crate) fn read_excalidraw_json(file_path: &Path, src_dir: &Path) -> Result<String, String> {
     let md_path;
     let paths: &[&Path] = if file_path.to_str().map_or(false, |s| s.ends_with(".md")) {
         &[file_path]
@@ -169,7 +275,7 @@ pub(crate) fn read_excalidraw_json(file_path: &Path) -> Result<String, String> {
             if path.to_str().map_or(false, |s| s.ends_with(".excalidraw.md")) {
                 let embedded = parse_embedded_files(&content);
                 return extract_json_from_excalidraw_md(&content)
-                    .map(|json| inject_embedded_files(&json, path, &embedded))
+                    .map(|json| inject_embedded_files(&json, path, src_dir, &embedded))
                     .ok_or_else(|| {
                         if content.contains("```compressed-json") {
                             "Excalidraw file uses compressed format. \
@@ -194,26 +300,26 @@ pub(crate) fn read_excalidraw_json(file_path: &Path) -> Result<String, String> {
 }
 
 /// Extract the raw JSON object from an `.excalidraw.md` file.
-///
-/// Supports two formats produced by the Obsidian Excalidraw plugin:
-///   - Uncompressed: scene JSON inside a ` ```json ` fenced block
-///   - Compressed:   LZ-string (compressToBase64) data inside a ` ```compressed-json ` block
-fn extract_json_from_excalidraw_md(content: &str) -> Option<String> {
+/// Returns a borrowed slice when the JSON is uncompressed (no allocation),
+/// or an owned String after decompression.
+fn extract_json_from_excalidraw_md(content: &str) -> Option<Cow<'_, str>> {
     if let Some(json) = extract_fenced_block(content, "```json\n") {
-        return Some(json);
+        return Some(Cow::Borrowed(json));
     }
     if let Some(compressed) = extract_fenced_block(content, "```compressed-json\n") {
-        let u16s = lz_str::decompress_from_base64(&compressed)?;
-        return String::from_utf16(&u16s).ok();
+        let u16s = lz_str::decompress_from_base64(compressed)?;
+        return String::from_utf16(&u16s).ok().map(Cow::Owned);
     }
     None
 }
 
-fn extract_fenced_block(content: &str, marker: &str) -> Option<String> {
+/// Return a slice of `content` containing only what is between `marker` and
+/// the next closing ` ``` ` — no allocation for the common uncompressed case.
+fn extract_fenced_block<'a>(content: &'a str, marker: &str) -> Option<&'a str> {
     let start = content.find(marker)? + marker.len();
     let rest = &content[start..];
     let end = rest.find("\n```")?;
-    Some(rest[..end].to_string())
+    Some(&rest[..end])
 }
 
 /// Scan `content` for excalidraw links and rewrite them to viewer URLs.
@@ -472,5 +578,36 @@ mod tests {
         let json = r#"{"text":"</script><script>alert(1)</script>"}"#;
         let chapter = make_excalidraw_chapter(&r, json);
         assert!(!chapter.content.contains("</script><script>"));
+    }
+
+    #[test]
+    fn inject_into_empty_files_object() {
+        let json = r#"{"type":"excalidraw","files":{}}"#;
+        let entries = r#""abc":{"mimeType":"image/png","id":"abc","dataURL":"data:image/png;base64,AA==","created":0}"#;
+        let result = inject_into_files_object(json, entries).unwrap();
+        assert!(result.contains(r#""files":{"abc":"#));
+    }
+
+    #[test]
+    fn inject_into_non_empty_files_object() {
+        let json = r#"{"type":"excalidraw","files":{"existing":{"id":"existing"}}}"#;
+        let entries = r#""new":{"id":"new"}"#;
+        let result = inject_into_files_object(json, entries).unwrap();
+        assert!(result.contains(r#""existing":{"id":"existing"},"new":{"id":"new"}"#));
+    }
+
+    #[test]
+    fn find_brace_handles_nested_objects() {
+        let s = r#"{"a":{"b":1},"c":2}"#;
+        let close = find_matching_close_brace(s).unwrap();
+        assert_eq!(&s[close..], "}");
+        assert_eq!(close, s.len() - 1);
+    }
+
+    #[test]
+    fn find_brace_handles_braces_in_strings() {
+        let s = r#"{"key":"val}ue"}"#;
+        let close = find_matching_close_brace(s).unwrap();
+        assert_eq!(close, s.len() - 1);
     }
 }
