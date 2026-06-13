@@ -153,10 +153,10 @@ fn escape_html(s: &str) -> String {
 fn js_str(s: &str) -> String {
     let escaped = s
         .replace('\\', "\\\\")
-        .replace('"', "\\\"")
+        .replace('\'', "\\'")
         .replace('\n', "\\n")
         .replace('\r', "");
-    format!("\"{}\"", escaped)
+    format!("'{}'", escaped)
 }
 
 #[cfg(test)]
@@ -215,7 +215,7 @@ mod tests {
         let input = "---\ntags: [rust]\n---\n\nBody\n";
         let out = process(input);
         assert!(out.contains("obTagSearch"));
-        assert!(out.contains("\"rust\""));
+        assert!(out.contains("'rust'"));
     }
 
     #[test]

@@ -44,13 +44,12 @@ pub(crate) fn process(content: &str) -> String {
         } else if in_code_block {
             result.push_str(line);
         } else {
-            // Trim trailing whitespace (including hard-break `  ` markers) for detection.
             let clean = line.trim();
 
-            if let Some(embed_html) = check_embed_line(clean, &link_re) {
+            if let Some((url_line, embed_html)) = check_embed_line(clean, &link_re) {
                 had_embed = true;
                 result.push_str("\n\n");
-                result.push_str(clean);
+                result.push_str(&url_line);
                 result.push_str("\n\n");
                 result.push_str(&embed_html);
                 result.push_str("\n\n");
@@ -72,23 +71,26 @@ pub(crate) fn process(content: &str) -> String {
     result
 }
 
-fn check_embed_line(content: &str, link_re: &Regex) -> Option<String> {
-    // Bare YouTube URL on the line.
+/// Returns `(url_link_line, embed_html)` when the line is a standalone YouTube link,
+/// in any of these forms:
+///   - bare URL:           `https://youtu.be/ID`
+///   - markdown link:      `[text](https://youtu.be/ID)`
+///   - image embed syntax: `![alt](https://youtu.be/ID)`
+fn check_embed_line(content: &str, link_re: &Regex) -> Option<(String, String)> {
+    // Bare YouTube URL.
     if let Some(id) = extract_youtube_id(content) {
-        return Some(make_embed(id));
+        let url_line = format!("[{}]({})", content, content);
+        return Some((url_line, make_embed(id)));
     }
 
-    // Single markdown link whose URL is a YouTube URL.
+    // Markdown link [text](url) or Obsidian image embed ![alt](url).
     if let Some(caps) = link_re.captures(content) {
         let mat = caps.get(0).unwrap();
         if mat.start() == 0 && mat.end() == content.len() {
-            let bang = caps.get(1).map_or("", |m| m.as_str());
-            if bang == "!" {
-                return None;
-            }
             let url = caps.get(3).map_or("", |m| m.as_str());
             if let Some(id) = extract_youtube_id(url) {
-                return Some(make_embed(id));
+                let url_line = format!("[{}]({})", url, url);
+                return Some((url_line, make_embed(id)));
             }
         }
     }
@@ -143,12 +145,15 @@ mod tests {
         assert!(out.contains("youtube.com/embed/dQw4w9WgXcQ"));
         assert!(out.contains("<iframe"));
         assert!(out.contains(".yt-embed"));
+        // URL shown as clickable link above player
+        assert!(out.contains("[https://youtu.be/dQw4w9WgXcQ](https://youtu.be/dQw4w9WgXcQ)"));
     }
 
     #[test]
     fn embeds_youtube_watch_url() {
         let out = process("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
         assert!(out.contains("youtube.com/embed/dQw4w9WgXcQ"));
+        assert!(out.contains("[https://www.youtube.com/watch?v=dQw4w9WgXcQ]"));
     }
 
     #[test]
@@ -156,11 +161,27 @@ mod tests {
         // After the autolink pass, bare URLs are wrapped as [url](url).
         let out = process("[https://youtu.be/abc123](https://youtu.be/abc123)");
         assert!(out.contains("youtube.com/embed/abc123"));
+        assert!(out.contains("[https://youtu.be/abc123](https://youtu.be/abc123)"));
+    }
+
+    #[test]
+    fn embeds_image_embed_syntax() {
+        // Obsidian-style image embed with a YouTube URL.
+        let out = process("![](https://youtu.be/abc123)");
+        assert!(out.contains("youtube.com/embed/abc123"));
+        assert!(out.contains("[https://youtu.be/abc123](https://youtu.be/abc123)"));
+    }
+
+    #[test]
+    fn embeds_named_link() {
+        // Named link: display text is discarded, raw URL is shown above player.
+        let out = process("[Watch this video](https://youtu.be/abc123)");
+        assert!(out.contains("youtube.com/embed/abc123"));
+        assert!(out.contains("[https://youtu.be/abc123](https://youtu.be/abc123)"));
     }
 
     #[test]
     fn does_not_embed_url_with_surrounding_text() {
-        // Only a standalone URL line should be embedded.
         let out = process("Watch https://youtu.be/abc here");
         assert!(!out.contains("<iframe"));
     }
