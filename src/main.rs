@@ -3,6 +3,7 @@ mod backlinks;
 mod breaks;
 mod embed;
 mod excalidraw;
+mod frontmatter;
 mod lightbox;
 mod obsidian_syntax;
 mod toc;
@@ -47,7 +48,31 @@ impl Preprocessor for ObsidianPreprocessor {
         // --- Pass 0: TOC generation --------------------------------------
         toc::run_toc_pass(ctx, &mut book, verbose);
 
-        // --- Pass 1: anchor normalization --------------------------------
+        // --- Pass 1: Frontmatter stripping -----------------------------------
+        let frontmatter_enabled = ctx
+            .config
+            .get::<bool>("preprocessor.obsidian.frontmatter")
+            .unwrap_or(None)
+            .unwrap_or(false);
+
+        if frontmatter_enabled {
+            book.for_each_mut(|item| {
+                if let BookItem::Chapter(chapter) = item {
+                    let is_excalidraw = chapter
+                        .source_path
+                        .as_ref()
+                        .and_then(|p| p.to_str())
+                        .map(|s| s.ends_with(".excalidraw") || s.ends_with(".excalidraw.md"))
+                        .unwrap_or(false);
+                    if is_excalidraw {
+                        return;
+                    }
+                    chapter.content = frontmatter::process(&chapter.content);
+                }
+            });
+        }
+
+        // --- Pass 2: anchor normalization --------------------------------
         let link_re = Regex::new(r"(!?)\[([^\]]*)\]\(([^)]+)\)").expect("valid regex");
         book.for_each_mut(|item| {
             if let BookItem::Chapter(chapter) = item {
@@ -55,7 +80,7 @@ impl Preprocessor for ObsidianPreprocessor {
             }
         });
 
-        // --- Pass 2: Excalidraw link detection and rewrite ---------------
+        // --- Pass 3: Excalidraw link detection and rewrite ---------------
         let excalidraw_enabled = ctx
             .config
             .get::<bool>("preprocessor.obsidian.excalidraw")

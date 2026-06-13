@@ -17,6 +17,7 @@ An [mdBook](https://rust-lang.github.io/mdBook/) preprocessor that makes Obsidia
   - [Auto heading insertion](#auto-heading-insertion-insert_heading)
   - [Hard line breaks](#hard-line-breaks-hard_line_breaks)
   - [Obsidian-flavored syntax](#obsidian-flavored-syntax-obsidian_syntax)
+  - [Frontmatter](#frontmatter-frontmatter)
   - [Backlinks](#backlinks-backlinks)
   - [Image lightbox](#image-lightbox-lightbox)
   - [Media embeds](#media-embeds-embed)
@@ -53,6 +54,7 @@ These are disabled by default and enabled per feature flag in `book.toml`.
 | Auto heading insertion | `insert_heading` | `false` |
 | Hard line breaks | `hard_line_breaks` | `false` |
 | Obsidian-flavored syntax | `obsidian_syntax` | `false` |
+| Frontmatter | `frontmatter` | `false` |
 | Backlinks | `backlinks` | `false` |
 | Image lightbox | `lightbox` | `false` |
 | Media embeds | `embed` | `false` |
@@ -118,6 +120,7 @@ toc_dirs_first   = false        # list directories before files at each level
 insert_heading   = false        # insert # Heading when chapter has none
 hard_line_breaks = false        # treat single newlines as <br>
 obsidian_syntax  = false        # convert Obsidian-flavored markdown
+frontmatter      = false        # strip YAML front matter; render tags and aliases
 backlinks        = false        # append a Backlinks section to each chapter
 lightbox         = false        # tap/click images to zoom and pan
 embed            = false        # embed YouTube videos in place of bare URLs
@@ -261,6 +264,40 @@ Append `+` for an expanded foldable callout or `-` for collapsed:
 ```
 
 Foldable callouts use the native `<details>`/`<summary>` elements and require no JavaScript. A small `<style>` block is injected into pages that contain callouts; override it with your own `additional-css` in `book.toml`.
+
+---
+
+### Frontmatter (`frontmatter`)
+
+```toml
+[preprocessor.obsidian]
+frontmatter = true
+```
+
+Strips YAML front matter (`--- … ---`) from every chapter so the raw key-value block does not appear in the rendered output. When the front matter contains `tags` or `aliases` (Obsidian's built-in properties), they are displayed as a styled badge strip at the top of the page instead of being silently dropped.
+
+**Tag badges are clickable** — pressing one fills mdBook's built-in search bar with the tag text and triggers a search, letting readers navigate to other pages with the same tag.
+
+Both inline and block YAML styles are supported:
+
+```yaml
+---
+tags: [rust, mdbook, open-source]
+aliases: [My Note, Note Alias]
+---
+```
+
+```yaml
+---
+tags:
+  - rust
+  - mdbook
+aliases:
+  - My Note
+---
+```
+
+A leading `#` on a tag value (older Obsidian style, e.g. `#rust`) is stripped automatically since the `#` glyph is added by CSS. All other front matter keys (`title`, `date`, `created`, etc.) are removed without display.
 
 ---
 
