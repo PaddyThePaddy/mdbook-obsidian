@@ -6,6 +6,8 @@ const CALLOUT_CSS: &str = r"<style>
 .callout-content{padding:.4em .8em}.callout-content>:last-child{margin-bottom:0}
 details.callout>summary{cursor:pointer;list-style:none;font-weight:600;padding:.4em .8em;background:rgba(0,0,0,.07)}
 details.callout>summary::-webkit-details-marker{display:none}
+details.callout>summary::before{content:'▶';display:inline-block;margin-right:.45em;font-size:.75em;transition:transform .2s;transform:rotate(0deg)}
+details.callout[open]>summary::before{transform:rotate(90deg)}
 .callout-note,.callout-info,.callout-todo{border-color:#4a9eff;background:rgba(74,158,255,.06)}
 .callout-note .callout-title,.callout-info .callout-title,.callout-todo .callout-title,
 details.callout-note>summary{background:rgba(74,158,255,.18)}
@@ -691,7 +693,9 @@ mod tests {
         let input = "> [!faq]- Collapsed\n> Content";
         let out = process(input, false);
         assert!(out.contains("<details"));
-        assert!(!out.contains("open"));
+        // Collapsed: the <details> opening tag must not carry the `open` attribute.
+        let details_tag = out.lines().find(|l| l.contains("<details")).unwrap_or("");
+        assert!(!details_tag.contains(" open"));
     }
 
     #[test]
