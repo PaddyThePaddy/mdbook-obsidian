@@ -1,5 +1,22 @@
 use regex::Regex;
 
+const CALLOUT_SCRIPT: &str = r#"<script>
+(function(){
+  function key(i){return 'ob-callout:'+location.pathname+':'+i;}
+  document.addEventListener('DOMContentLoaded',function(){
+    document.querySelectorAll('details.callout').forEach(function(el,i){
+      var k=key(i), s=sessionStorage.getItem(k);
+      if(s==='open') el.open=true;
+      else if(s==='closed') el.open=false;
+      el.addEventListener('toggle',function(){
+        sessionStorage.setItem(k, el.open?'open':'closed');
+      });
+    });
+  });
+})();
+</script>
+"#;
+
 const CALLOUT_CSS: &str = r"<style>
 .callout{border-left:4px solid #888;border-radius:0 4px 4px 0;margin:1em 0;overflow:hidden}
 .callout-title{font-weight:600;padding:.4em .8em;background:rgba(0,0,0,.07)}
@@ -46,7 +63,7 @@ pub(crate) fn process(content: &str, _verbose: bool) -> String {
     let s = convert_highlights(&s);
     let s = convert_wikilinks(&s);
     if had_callouts {
-        format!("{CALLOUT_CSS}\n\n{s}")
+        format!("{CALLOUT_CSS}\n{CALLOUT_SCRIPT}\n{s}")
     } else {
         s
     }
