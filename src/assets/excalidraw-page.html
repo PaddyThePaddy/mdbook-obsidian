@@ -83,10 +83,19 @@
     var scene = JSON.parse(document.getElementById('excalidraw-scene').textContent);
     var root  = ReactDOM.createRoot(document.getElementById('excalidraw-root'));
     root.render(React.createElement(ExcalidrawLib.Excalidraw, {
+      excalidrawAPI: function(api) {
+        // Defer until after the canvas has been laid out and measured.
+        setTimeout(function() {
+          var els = api.getSceneElements();
+          if (els && els.length) {
+            api.scrollToContent(els, { fitToViewport: true, viewportZoomFactor: 0.9 });
+          }
+        }, 50);
+      },
       initialData: {
         elements: patchElements(scene.elements || []),
-        appState:  Object.assign({}, scene.appState, { theme: isDark() ? 'dark' : 'light' }),
-        files:     scene.files || {},
+        appState: Object.assign({}, scene.appState, { theme: isDark() ? 'dark' : 'light' }),
+        files:    scene.files || {},
       },
       viewModeEnabled: true,
     }));
